@@ -1,4 +1,4 @@
-# ExAST
+# ExAST 🔬
 
 Search and replace Elixir code by AST pattern.
 
