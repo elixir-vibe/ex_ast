@@ -133,4 +133,168 @@ defmodule ExAST.PatcherTest do
       assert result =~ "build_step(@my_fields)"
     end
   end
+
+  describe "where conditions" do
+    test "inside filters by ancestor" do
+      source = """
+      defmodule Example do
+        def run do
+          IO.inspect(1)
+        end
+
+        defp helper do
+          IO.inspect(2)
+        end
+      end
+      """
+
+      matches = Patcher.find_all(source, "IO.inspect(_)", inside: "defp _ do _ end")
+      assert length(matches) == 1
+      assert matches |> hd() |> Map.get(:range) |> get_in([Access.key(:start), :line]) == 7
+    end
+
+    test "not_inside excludes by ancestor" do
+      source = """
+      defmodule Example do
+        def run do
+          IO.inspect(1)
+        end
+
+        test "example" do
+          IO.inspect(2)
+        end
+      end
+      """
+
+      matches = Patcher.find_all(source, "IO.inspect(_)", not_inside: "test _ do _ end")
+      assert length(matches) == 1
+      assert matches |> hd() |> Map.get(:range) |> get_in([Access.key(:start), :line]) == 3
+    end
+
+    test "inside and not_inside combined" do
+      source = """
+      defmodule Example do
+        def run do
+          if true do
+            IO.inspect(1)
+          end
+          IO.inspect(2)
+        end
+      end
+      """
+
+      matches =
+        Patcher.find_all(source, "IO.inspect(_)",
+          inside: "def _ do _ end",
+          not_inside: "if _ do _ end"
+        )
+
+      assert length(matches) == 1
+      assert matches |> hd() |> Map.get(:range) |> get_in([Access.key(:start), :line]) == 6
+    end
+
+    test "ancestors are not leaked into result" do
+      source = """
+      def run do
+        IO.inspect(1)
+      end
+      """
+
+      [match] = Patcher.find_all(source, "IO.inspect(_)")
+      refute Map.has_key?(match, :ancestors)
+    end
+  end
+
+  describe "multi-node patterns" do
+    test "matches sequential statements" do
+      source = """
+      def run do
+        record = Repo.get!(User, id)
+        Repo.delete(record)
+      end
+      """
+
+      matches = Patcher.find_all(source, "a = Repo.get!(_, _); Repo.delete(a)")
+      assert length(matches) == 1
+    end
+
+    test "captures are consistent across statements" do
+      source = """
+      def run do
+        record = Repo.get!(User, id)
+        Repo.delete(record)
+      end
+      """
+
+      [match] = Patcher.find_all(source, "a = Repo.get!(_, _); Repo.delete(a)")
+      assert Map.has_key?(match.captures, :a)
+    end
+
+    test "rejects inconsistent captures" do
+      source = """
+      def run do
+        record = Repo.get!(User, id)
+        Repo.delete(other)
+      end
+      """
+
+      matches = Patcher.find_all(source, "a = Repo.get!(_, _); Repo.delete(a)")
+      assert matches == []
+    end
+
+    test "non-adjacent statements are not matched" do
+      source = """
+      def run do
+        record = Repo.get!(User, id)
+        Logger.info("deleting")
+        Repo.delete(record)
+      end
+      """
+
+      matches = Patcher.find_all(source, "a = Repo.get!(_, _); Repo.delete(a)")
+      assert matches == []
+    end
+
+    test "range spans all matched nodes" do
+      source = """
+      def run do
+        IO.inspect(1)
+        IO.inspect(2)
+        IO.inspect(3)
+      end
+      """
+
+      matches = Patcher.find_all(source, "IO.inspect(1); IO.inspect(2)")
+      assert length(matches) == 1
+      [match] = matches
+      assert match.range.start[:line] == 2
+      assert match.range.end[:line] == 3
+    end
+
+    test "multi-node with where conditions" do
+      source = """
+      defmodule A do
+        def run do
+          x = Repo.get!(User, 1)
+          Repo.delete(x)
+        end
+
+        test "example" do
+          y = Repo.get!(User, 2)
+          Repo.delete(y)
+        end
+      end
+      """
+
+      matches =
+        Patcher.find_all(
+          source,
+          "a = Repo.get!(_, _); Repo.delete(a)",
+          not_inside: "test _ do _ end"
+        )
+
+      assert length(matches) == 1
+      assert matches |> hd() |> Map.get(:range) |> get_in([Access.key(:start), :line]) == 3
+    end
+  end
 end

@@ -6,12 +6,36 @@ defmodule ExAST.Pattern do
   - Bare variables (`name`, `expr`) capture the matched AST node
   - `_` and `_name` are wildcards (match anything, don't capture)
   - Structs and maps match partially (only specified keys must be present)
-  - Everything else matches literally
+  - Pipes are normalized (`data |> Enum.map(f)` matches `Enum.map(data, f)`)
+  - Multi-statement patterns match contiguous sequences in blocks
 
   Repeated variable names require the same value at every position.
   """
 
   @type captures :: %{atom() => term()}
+
+  @doc """
+  Returns `true` if the pattern string contains multiple statements
+  (separated by `;` or newlines), enabling sequential matching.
+  """
+  @spec multi_node?(String.t()) :: boolean()
+  def multi_node?(pattern_string) do
+    case Code.string_to_quoted!(pattern_string) do
+      {:__block__, _, [_ | _] = children} when length(children) > 1 -> true
+      _ -> false
+    end
+  end
+
+  @doc """
+  Returns the individual pattern ASTs from a multi-node pattern string.
+  """
+  @spec pattern_nodes(String.t()) :: [Macro.t()]
+  def pattern_nodes(pattern_string) do
+    case Code.string_to_quoted!(pattern_string) do
+      {:__block__, _, children} when is_list(children) -> children
+      single -> [single]
+    end
+  end
 
   @doc """
   Matches a Sourceror AST node against a pattern string.
@@ -22,6 +46,53 @@ defmodule ExAST.Pattern do
   def match(node, pattern_string) when is_binary(pattern_string) do
     pattern_ast = Code.string_to_quoted!(pattern_string)
     do_match(normalize(node), normalize(pattern_ast), %{})
+  end
+
+  @doc """
+  Matches a Sourceror AST node against an already-parsed pattern AST.
+  """
+  @spec match_ast(Macro.t(), Macro.t()) :: {:ok, captures()} | :error
+  def match_ast(node, pattern_ast) do
+    do_match(normalize(node), normalize(pattern_ast), %{})
+  end
+
+  @doc """
+  Finds all contiguous subsequences of `nodes` matching `pattern_asts`.
+
+  Returns a list of `{captures, start_index..end_index}` tuples.
+  Captures are accumulated across all matched nodes and must be consistent.
+  """
+  @spec match_sequences([Macro.t()], [Macro.t()]) :: [{captures(), Range.t()}]
+  def match_sequences(nodes, pattern_asts) when is_list(nodes) and is_list(pattern_asts) do
+    pattern_count = length(pattern_asts)
+    normalized_patterns = Enum.map(pattern_asts, &normalize/1)
+    do_match_sequences(nodes, normalized_patterns, pattern_count, 0, [])
+  end
+
+  defp do_match_sequences(nodes, _patterns, pattern_count, _offset, acc)
+       when length(nodes) < pattern_count,
+       do: Enum.reverse(acc)
+
+  defp do_match_sequences(nodes, patterns, pattern_count, offset, acc) do
+    window = Enum.take(nodes, pattern_count)
+
+    case match_all(window, patterns, %{}) do
+      {:ok, caps} ->
+        range = offset..(offset + pattern_count - 1)
+        do_match_sequences(tl(nodes), patterns, pattern_count, offset + 1, [{caps, range} | acc])
+
+      :error ->
+        do_match_sequences(tl(nodes), patterns, pattern_count, offset + 1, acc)
+    end
+  end
+
+  defp match_all([], [], caps), do: {:ok, caps}
+
+  defp match_all([node | nodes], [pattern | patterns], caps) do
+    case do_match(normalize(node), pattern, caps) do
+      {:ok, caps} -> match_all(nodes, patterns, caps)
+      :error -> :error
+    end
   end
 
   @doc """
@@ -37,9 +108,16 @@ defmodule ExAST.Pattern do
 
   # --- Normalization ---
 
-  # Strips metadata and unwraps Sourceror's __block__ wrappers
+  # Strips metadata, unwraps __block__ wrappers, and desugars pipes
   # so both pattern and source ASTs have the same shape.
   defp normalize({:__block__, _meta, [inner]}), do: normalize(inner)
+
+  # Desugar pipe: `a |> f(b, c)` → `f(a, b, c)`
+  defp normalize({:|>, _meta, [left, {form, meta2, args}]}) when is_list(args),
+    do: normalize({form, meta2, [left | args]})
+
+  defp normalize({:|>, _meta, [left, {form, meta2, nil}]}),
+    do: normalize({form, meta2, [left]})
 
   defp normalize({form, _meta, args}) when is_atom(form),
     do: {form, nil, normalize(args)}
@@ -151,10 +229,10 @@ defmodule ExAST.Pattern do
   end
 
   defp find_value_by_key(kvs, key) do
-    case Enum.find(kvs, fn {k, _} -> k == key end) do
-      {_, val} -> {:ok, val}
-      nil -> :error
-    end
+    Enum.find_value(kvs, :error, fn
+      {k, v} when k == key -> {:ok, v}
+      _ -> nil
+    end)
   end
 
   defp match_kv_value({:ok, sval}, pval, caps) do

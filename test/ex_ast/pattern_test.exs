@@ -169,6 +169,35 @@ defmodule ExAST.PatternTest do
     test "pipe into function" do
       assert {:ok, %{}} = match!("data |> Enum.map(fun)", "_ |> Enum.map(_)")
     end
+
+    test "pipe matches unpipelined call" do
+      assert {:ok, %{}} = match!("data |> Enum.map(fun)", "Enum.map(_, _)")
+    end
+
+    test "unpipelined call matches pipe pattern" do
+      assert {:ok, %{}} = match!("Enum.map(data, fun)", "data |> Enum.map(fun)")
+    end
+
+    test "pipe captures" do
+      assert {:ok, %{input: _, mapper: _}} =
+               match!("data |> Enum.map(fun)", "Enum.map(input, mapper)")
+    end
+
+    test "multi-step pipe normalizes" do
+      assert {:ok, %{}} =
+               match!(
+                 "data |> Enum.map(f) |> Enum.filter(g)",
+                 "Enum.filter(Enum.map(data, f), g)"
+               )
+    end
+
+    test "pipe into zero-arity" do
+      assert {:ok, %{}} = match!("data |> Enum.to_list()", "Enum.to_list(_)")
+    end
+
+    test "pipe into bare function" do
+      assert {:ok, %{}} = match!("data |> to_string", "to_string(_)")
+    end
   end
 
   describe "directives" do
@@ -237,6 +266,70 @@ defmodule ExAST.PatternTest do
       template = Code.string_to_quoted!("fn _ -> expr end")
       result = Pattern.substitute(template, captures)
       assert Macro.to_string(result) =~ "data"
+    end
+  end
+
+  describe "multi_node?/1" do
+    test "single expression" do
+      refute Pattern.multi_node?("IO.inspect(x)")
+    end
+
+    test "semicolon-separated" do
+      assert Pattern.multi_node?("a = 1; b = 2")
+    end
+
+    test "newline-separated" do
+      assert Pattern.multi_node?("a = 1\nb = 2")
+    end
+  end
+
+  describe "match_sequences/2" do
+    test "finds contiguous match" do
+      nodes = Enum.map(["x = 1", "y = 2", "z = 3"], &Code.string_to_quoted!/1)
+      patterns = Enum.map(["_ = 1", "_ = 2"], &Code.string_to_quoted!/1)
+
+      assert [{caps, 0..1}] = Pattern.match_sequences(nodes, patterns)
+      assert map_size(caps) == 0
+    end
+
+    test "consistent captures across nodes" do
+      nodes =
+        Enum.map(
+          ["a = Repo.get!(User, 1)", "Repo.delete(a)"],
+          &Code.string_to_quoted!/1
+        )
+
+      patterns =
+        Enum.map(
+          ["x = Repo.get!(_, _)", "Repo.delete(x)"],
+          &Code.string_to_quoted!/1
+        )
+
+      assert [{caps, 0..1}] = Pattern.match_sequences(nodes, patterns)
+      assert Map.has_key?(caps, :x)
+    end
+
+    test "rejects inconsistent captures" do
+      nodes =
+        Enum.map(
+          ["a = Repo.get!(User, 1)", "Repo.delete(b)"],
+          &Code.string_to_quoted!/1
+        )
+
+      patterns =
+        Enum.map(
+          ["x = Repo.get!(_, _)", "Repo.delete(x)"],
+          &Code.string_to_quoted!/1
+        )
+
+      assert [] = Pattern.match_sequences(nodes, patterns)
+    end
+
+    test "no match returns empty list" do
+      nodes = Enum.map(["x = 1"], &Code.string_to_quoted!/1)
+      patterns = Enum.map(["_ = 1", "_ = 2"], &Code.string_to_quoted!/1)
+
+      assert [] = Pattern.match_sequences(nodes, patterns)
     end
   end
 end

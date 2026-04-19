@@ -10,35 +10,45 @@ defmodule Mix.Tasks.ExAst.Replace do
   ## Options
 
     * `--dry-run` — show changes without writing files
+    * `--inside 'pattern'` — only replace inside ancestors matching this pattern
+    * `--not-inside 'pattern'` — skip replacements inside ancestors matching this pattern
 
   ## Examples
 
       mix ex_ast.replace 'IO.inspect(expr, _)' 'expr' lib/
       mix ex_ast.replace 'dbg(expr)' 'expr'
       mix ex_ast.replace --dry-run '%Step{id: "subject"}' 'SharedSteps.subject_step(@opts)'
+      mix ex_ast.replace --not-inside 'test _ do _ end' 'IO.inspect(expr)' 'expr'
   """
 
   use Mix.Task
 
   @impl Mix.Task
   def run(args) do
-    {opts, positional, _} = OptionParser.parse(args, strict: [dry_run: :boolean])
+    {opts, positional, _} =
+      OptionParser.parse(args,
+        strict: [dry_run: :boolean, inside: :string, not_inside: :string]
+      )
 
     case positional do
       [pattern, replacement | paths] ->
         paths = if paths == [], do: ["lib/"], else: paths
-        dry_run = opts[:dry_run] || false
-        do_replace(paths, pattern, replacement, dry_run)
+        do_replace(paths, pattern, replacement, opts)
 
       _ ->
         Mix.raise("Usage: mix ex_ast.replace 'pattern' 'replacement' [path ...]")
     end
   end
 
-  defp do_replace(paths, pattern, replacement, dry_run) do
+  defp do_replace(paths, pattern, replacement, opts) do
     validate_syntax!(pattern, "pattern")
     validate_syntax!(replacement, "replacement")
-    results = ExAST.replace(paths, pattern, replacement, dry_run: dry_run)
+
+    where_opts = Keyword.take(opts, [:inside, :not_inside])
+    Enum.each(where_opts, fn {_key, p} -> validate_syntax!(p, "filter pattern") end)
+
+    replace_opts = [{:dry_run, opts[:dry_run] || false} | where_opts]
+    results = ExAST.replace(paths, pattern, replacement, replace_opts)
 
     case results do
       [] ->
@@ -46,7 +56,7 @@ defmodule Mix.Tasks.ExAst.Replace do
 
       files ->
         total = files |> Enum.map(&elem(&1, 1)) |> Enum.sum()
-        verb = if dry_run, do: "Would update", else: "Updated"
+        verb = if opts[:dry_run], do: "Would update", else: "Updated"
 
         for {file, count} <- files do
           IO.puts("#{verb} #{file} (#{count} replacement(s))")

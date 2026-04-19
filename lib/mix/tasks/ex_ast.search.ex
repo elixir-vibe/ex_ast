@@ -10,6 +10,8 @@ defmodule Mix.Tasks.ExAst.Search do
   ## Options
 
     * `--count` — only print the number of matches
+    * `--inside 'pattern'` — only match inside ancestors matching this pattern
+    * `--not-inside 'pattern'` — reject matches inside ancestors matching this pattern
 
   ## Pattern syntax
 
@@ -18,6 +20,7 @@ defmodule Mix.Tasks.ExAst.Search do
     * Variables (`name`, `expr`) — capture any node
     * `_` or `_name` — wildcard (match, don't capture)
     * Structs/maps — partial match (only listed keys must be present)
+    * Pipes are normalized — `data |> Enum.map(f)` matches `Enum.map(data, f)`
     * Everything else — literal match
 
   ## Examples
@@ -26,13 +29,16 @@ defmodule Mix.Tasks.ExAst.Search do
       mix ex_ast.search '%Step{id: "subject"}' lib/documents/
       mix ex_ast.search '{:error, reason}' lib/ test/
       mix ex_ast.search --count 'dbg(_)'
+      mix ex_ast.search --inside 'def handle_call(_, _, _) do _ end' 'Repo.get!(_)'
+      mix ex_ast.search --not-inside 'test _ do _ end' 'IO.inspect(_)'
   """
 
   use Mix.Task
 
   @impl Mix.Task
   def run(args) do
-    {opts, positional, _} = OptionParser.parse(args, strict: [count: :boolean])
+    {opts, positional, _} =
+      OptionParser.parse(args, strict: [count: :boolean, inside: :string, not_inside: :string])
 
     case positional do
       [pattern | paths] ->
@@ -46,7 +52,10 @@ defmodule Mix.Tasks.ExAst.Search do
 
   defp do_search(paths, pattern, opts) do
     validate_pattern!(pattern)
-    results = ExAST.search(paths, pattern)
+
+    where_opts = Keyword.take(opts, [:inside, :not_inside])
+    Enum.each(where_opts, fn {_key, p} -> validate_pattern!(p) end)
+    results = ExAST.search(paths, pattern, where_opts)
 
     if opts[:count] do
       IO.puts(length(results))

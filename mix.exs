@@ -1,7 +1,7 @@
 defmodule ExAST.MixProject do
   use Mix.Project
 
-  @version "0.2.0"
+  @version "0.3.0"
   @source_url "https://github.com/dannote/ex_ast"
 
   def project do
@@ -16,6 +16,7 @@ defmodule ExAST.MixProject do
       source_url: @source_url,
       docs: docs(),
       package: package(),
+      aliases: aliases(),
       dialyzer: [
         plt_file: {:no_warn, "_build/dev/dialyxir_plt.plt"},
         ignore_warnings: ".dialyzer_ignore.exs"
@@ -47,6 +48,22 @@ defmodule ExAST.MixProject do
     [
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url}
+    ]
+  end
+
+  def cli do
+    [preferred_envs: [ci: :test]]
+  end
+
+  defp aliases do
+    [
+      ci: [
+        "compile --warnings-as-errors",
+        "format --check-formatted",
+        "credo --strict",
+        "dialyzer",
+        "test"
+      ]
     ]
   end
 end
