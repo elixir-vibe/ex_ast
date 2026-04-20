@@ -15,6 +15,17 @@
   - Colored output with `-`/`+` markers (red/green, auto-detected)
   - `--no-color`, `--no-moves`, `--summary`, `--json` flags
   - Human-readable labels (`def create/1` instead of `{:def, :create, 1}`)
+- **AST and zipper input** — `Patcher.find_all/3` and `Patcher.replace_all/4`
+  now accept source strings, `Sourceror.Zipper`, or raw AST as input.
+  Source-string variants return strings, AST/zipper variants return AST.
+- **Quoted expressions as patterns** — patterns and replacements can be
+  strings or quoted expressions:
+  ```elixir
+  Patcher.find_all(source, quote(do: IO.inspect(_)))
+  Patcher.replace_all(ast, quote(do: IO.inspect(expr)), quote(do: dbg(expr)))
+  ```
+  `inside`/`not_inside` options also accept quoted.
+- **ex_dna** added to CI checks
 
 ## 0.3.0
 
