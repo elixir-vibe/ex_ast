@@ -1,6 +1,6 @@
 # ExAST 🔬
 
-Search and replace Elixir code by AST pattern.
+Search, replace, and diff Elixir code by AST pattern.
 
 Patterns are plain Elixir — variables capture, `_` is a wildcard,
 structs match partially, pipes are normalized. No regex, no custom DSL.
@@ -8,13 +8,14 @@ structs match partially, pipes are normalized. No regex, no custom DSL.
 ```bash
 mix ex_ast.search  'IO.inspect(_)'
 mix ex_ast.replace 'IO.inspect(expr, _)' 'Logger.debug(inspect(expr))' lib/
+mix ex_ast.diff lib/old.ex lib/new.ex
 ```
 
 ## Installation
 
 ```elixir
 def deps do
-  [{:ex_ast, "~> 0.2", only: [:dev, :test], runtime: false}]
+  [{:ex_ast, "~> 0.3", only: [:dev, :test], runtime: false}]
 end
 ```
 
@@ -127,6 +128,54 @@ mix ex_ast.replace --not-inside 'test _ do _ end' 'IO.inspect(expr)' 'expr'
 
 Captures from the pattern are substituted into the replacement by name.
 
+### Diff
+
+Syntax-aware diff between two Elixir files. Unlike text-based diffs,
+it understands Elixir structure — functions are matched by name and
+arity, reorders are reported as moves, and changes are classified by
+kind (function, call, map, keyword, assignment).
+
+```bash
+# Compare two files
+mix ex_ast.diff lib/old.ex lib/new.ex
+
+# Only print summary lines
+mix ex_ast.diff --summary lib/old.ex lib/new.ex
+
+# Disable move detection
+mix ex_ast.diff --no-moves lib/old.ex lib/new.ex
+
+# Print edits as Elixir terms
+mix ex_ast.diff --json lib/old.ex lib/new.ex
+```
+
+Example output:
+
+```
+lib/old.ex ↔ lib/new.ex
+
+2:3 MOVE moved function {:def, :first, 0}
+
+2:3 UPDATE updated function {:def, :first, 0}
+  - def first, do: 1
+  + def first, do: 10
+
+5:3 INSERT inserted function {:def, :fourth, 0}
+  + def fourth, do: 4
+
+3 edit(s)
+```
+
+What it detects:
+
+- **Function updates** — body or guard changes, with old/new source
+- **Function inserts/deletes** — matched by `{name, arity}`
+- **Function reorders** — reported as `:move` edits
+- **Call updates** — local and remote calls matched by name/arity
+- **Map/struct/keyword changes** — key-based matching
+- **Pipeline changes** — pipes are normalized, stages matched individually
+- **Assignments** — `=` bindings tracked as distinct semantic nodes
+
 ### Programmatic API
 
 ```elixir
@@ -148,7 +197,26 @@ ExAST.replace("lib/", "IO.inspect(expr)", "expr", not_inside: "test _ do _ end")
 ExAST.Patcher.find_all(source_code, "IO.inspect(_)")
 ExAST.Patcher.find_all(source_code, "IO.inspect(_)", inside: "def _ do _ end")
 ExAST.Patcher.replace_all(source_code, "dbg(expr)", "expr")
+
+# Syntax-aware diff
+result = ExAST.diff(old_source, new_source)
+result.edits
+#=> [%ExAST.Diff.Edit{op: :update, kind: :function, summary: "...", ...}]
+
+result = ExAST.diff(old_source, new_source, include_moves: false)
+ExAST.diff_files("lib/old.ex", "lib/new.ex")
 ```
+
+Each edit is an `%ExAST.Diff.Edit{}` struct with:
+
+| Field | Description |
+|-------|-------------|
+| `op` | `:insert`, `:delete`, `:update`, or `:move` |
+| `kind` | `:function`, `:call`, `:remote_call`, `:map`, `:struct`, `:keyword`, `:assignment`, `:module` |
+| `summary` | Human-readable description |
+| `old_range` / `new_range` | Source positions (`%Sourceror.Range{}`) |
+| `old_id` / `new_id` | Internal node IDs from the annotated tree |
+| `meta` | `%{old: "...", new: "..."}` with rendered source for updates |
 
 ## What you can match
 
@@ -221,8 +289,12 @@ dbg(_)
   break the match.
 - **Replacement formatting** — the replacement string is rendered by
   `Macro.to_string/1`. Run `mix format` afterward for consistent style.
+- **Diff is structural, not semantic** — macros are not expanded.
+  Moves are only detected for functions within the same module body.
 
 ## How it works
+
+### Search & Replace
 
 1. Source files are parsed with [Sourceror](https://hex.pm/packages/sourceror),
    preserving source positions and comments
@@ -239,6 +311,30 @@ dbg(_)
 8. For replacements, captures are substituted into the replacement template
    and the result is patched into the original source using
    `Sourceror.patch_string/2`, preserving formatting of unchanged code
+
+### Diff
+
+1. Both source strings are parsed with Sourceror and annotated into
+   a tree of nodes, each with a stable ID, kind, label, normalized hash,
+   source range, and parent/child relationships
+2. **Anchor phase** — functions are matched by `{name, arity}` across
+   trees; their parent container nodes are mapped transitively; the root
+   nodes are always mapped
+3. **Semantic matching** — remaining unmatched nodes are scored by kind,
+   label, signature, parent mapping, and subtree size similarity, then
+   greedily matched to the best candidate
+4. **Child recovery** — keyed children (map fields, keyword entries)
+   are matched by key; ordered children under modules/functions are matched
+   by compatibility
+5. **Classification** — each mapping pair is checked for content changes
+   (hash mismatch → `:update`); unmatched left nodes → `:delete`;
+   unmatched right nodes → `:insert`; matched functions whose sibling
+   order changed → `:move`
+6. Edits are sorted by source position and deduplicated
+
+The algorithm is inspired by [GumTree](https://github.com/GumTreeDiff/gumtree),
+adapted for Elixir's specific AST shape — `do` blocks, keyword lists,
+pipe normalization, and Sourceror's comment-preserving metadata.
 
 ## License
 

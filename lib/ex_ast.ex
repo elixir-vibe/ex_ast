@@ -1,6 +1,6 @@
 defmodule ExAST do
   @moduledoc """
-  Search and replace Elixir code by AST pattern.
+  Search, replace, and diff Elixir code by AST pattern.
 
   Patterns are valid Elixir syntax:
   - Variables (`name`, `expr`) capture matched nodes
@@ -27,8 +27,14 @@ defmodule ExAST do
 
       # Match piped and direct calls interchangeably
       ExAST.search("lib/", "Enum.map(_, _)")  # also finds `data |> Enum.map(f)`
+
+      # Syntax-aware diff
+      result = ExAST.diff(old_source, new_source)
+      result.edits  #=> [%ExAST.Diff.Edit{op: :update, kind: :function, ...}]
+      ExAST.diff_files("lib/old.ex", "lib/new.ex")
   """
 
+  alias ExAST.Diff
   alias ExAST.Patcher
 
   @type match :: %{
@@ -37,6 +43,8 @@ defmodule ExAST do
           source: String.t(),
           captures: ExAST.Pattern.captures()
         }
+
+  @type diff_result :: ExAST.Diff.Result.t()
 
   @doc """
   Searches files for AST pattern matches.
@@ -70,6 +78,30 @@ defmodule ExAST do
     paths
     |> resolve_paths()
     |> Enum.flat_map(&replace_file(&1, pattern, replacement, dry_run, where_opts))
+  end
+
+  @doc """
+  Computes a syntax-aware diff between two Elixir source strings.
+  """
+  @spec diff(String.t(), String.t(), keyword()) :: diff_result()
+  def diff(left_source, right_source, opts \\ []) do
+    Diff.diff(left_source, right_source, opts)
+  end
+
+  @doc """
+  Computes a syntax-aware diff between two Elixir files.
+  """
+  @spec diff_files(String.t(), String.t(), keyword()) :: diff_result()
+  def diff_files(left_path, right_path, opts \\ []) do
+    Diff.diff_files(left_path, right_path, opts)
+  end
+
+  @doc """
+  Applies a diff result to produce the patched source.
+  """
+  @spec apply_diff(diff_result()) :: String.t()
+  def apply_diff(result) do
+    Diff.apply(result)
   end
 
   defp search_file(file, pattern, opts) do

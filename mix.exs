@@ -1,7 +1,7 @@
 defmodule ExAST.MixProject do
   use Mix.Project
 
-  @version "0.3.0"
+  @version "0.4.0"
   @source_url "https://github.com/dannote/ex_ast"
 
   def project do
@@ -12,7 +12,7 @@ defmodule ExAST.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       name: "ExAST",
-      description: "Search and replace Elixir code by AST pattern",
+      description: "Search, replace, and diff Elixir code by AST pattern",
       source_url: @source_url,
       docs: docs(),
       package: package(),
