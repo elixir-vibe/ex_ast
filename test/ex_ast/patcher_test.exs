@@ -297,4 +297,124 @@ defmodule ExAST.PatcherTest do
       assert matches |> hd() |> Map.get(:range) |> get_in([Access.key(:start), :line]) == 3
     end
   end
+
+  describe "find_all/3 with AST input" do
+    test "accepts raw AST" do
+      ast = Sourceror.parse_string!("IO.inspect(data)")
+      [match] = Patcher.find_all(ast, "IO.inspect(_)")
+      assert match.captures == %{}
+    end
+
+    test "accepts Sourceror zipper" do
+      zipper = "IO.inspect(data)" |> Sourceror.parse_string!() |> Sourceror.Zipper.zip()
+      [match] = Patcher.find_all(zipper, "IO.inspect(_)")
+      assert match.captures == %{}
+    end
+
+    test "captures work with AST input" do
+      ast = Sourceror.parse_string!(~s(%Step{id: "subject", title: "Hello"}))
+      [match] = Patcher.find_all(ast, ~s(%Step{id: name}))
+      assert match.captures[:name] == "subject"
+    end
+
+    test "finds nested patterns in AST" do
+      ast =
+        Sourceror.parse_string!("""
+        defmodule Example do
+          def run do
+            IO.inspect(1)
+            IO.inspect(2)
+          end
+        end
+        """)
+
+      matches = Patcher.find_all(ast, "IO.inspect(_)")
+      assert length(matches) == 2
+    end
+
+    test "inside/not_inside work with AST input" do
+      ast =
+        Sourceror.parse_string!("""
+        defmodule Example do
+          def run, do: IO.inspect(1)
+          defp helper, do: IO.inspect(2)
+        end
+        """)
+
+      matches = Patcher.find_all(ast, "IO.inspect(_)", inside: "defp _ do _ end")
+      assert length(matches) == 1
+    end
+
+    test "range is nil for nodes without position metadata" do
+      ast = Code.string_to_quoted!("IO.inspect(data)")
+      [match] = Patcher.find_all(ast, "IO.inspect(_)")
+      assert match.range == nil
+    end
+  end
+
+  describe "replace_all/4 with AST input" do
+    test "returns modified AST from raw AST" do
+      ast = Sourceror.parse_string!("IO.inspect(data)")
+      result = Patcher.replace_all(ast, "IO.inspect(expr)", "dbg(expr)")
+      assert Macro.to_string(result) =~ "dbg(data)"
+    end
+
+    test "returns modified AST from zipper" do
+      zipper = "IO.inspect(data)" |> Sourceror.parse_string!() |> Sourceror.Zipper.zip()
+      result = Patcher.replace_all(zipper, "IO.inspect(expr)", "dbg(expr)")
+      assert Macro.to_string(result) =~ "dbg(data)"
+    end
+
+    test "substitutes captures in replacement" do
+      ast =
+        Sourceror.parse_string!("""
+        defmodule A do
+          def run do
+            IO.inspect(data, label: "debug")
+          end
+        end
+        """)
+
+      result = Patcher.replace_all(ast, "IO.inspect(expr, _)", "Logger.debug(expr)")
+      source = Macro.to_string(result)
+      assert source =~ "Logger.debug(data)"
+      refute source =~ "IO.inspect"
+    end
+
+    test "preserves unmatched nodes" do
+      ast =
+        Sourceror.parse_string!("""
+        IO.inspect(data)
+        IO.puts("keep")
+        """)
+
+      result = Patcher.replace_all(ast, "IO.inspect(expr)", "dbg(expr)")
+      source = Macro.to_string(result)
+      assert source =~ "dbg(data)"
+      assert source =~ "IO.puts"
+    end
+
+    test "no match returns AST unchanged" do
+      ast = Sourceror.parse_string!("IO.puts(:hello)")
+      result = Patcher.replace_all(ast, "IO.inspect(_)", "dbg(_)")
+      assert result == ast
+    end
+
+    test "inside/not_inside work with AST replacement" do
+      ast =
+        Sourceror.parse_string!("""
+        defmodule A do
+          def run, do: IO.inspect(1)
+          defp helper, do: IO.inspect(2)
+        end
+        """)
+
+      result =
+        Patcher.replace_all(ast, "IO.inspect(expr)", "dbg(expr)", inside: "defp _ do _ end")
+
+      source = inspect(result, limit: :infinity)
+      assert source =~ ":inspect"
+      assert source =~ ":dbg"
+    end
+  end
 end

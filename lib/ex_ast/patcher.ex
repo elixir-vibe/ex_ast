@@ -2,20 +2,24 @@ defmodule ExAST.Patcher do
   @moduledoc """
   Finds and replaces AST patterns in source code.
 
-  Uses Sourceror for parsing, traversal, and source-level patching
-  to preserve formatting of unchanged code.
+  Accepts source strings, AST nodes, or Sourceror zippers as input.
+  Source-string functions preserve formatting via `Sourceror.patch_string/2`.
+  AST/zipper functions return modified AST trees.
   """
 
   alias ExAST.Pattern
+  alias Sourceror.Zipper
 
   @type match :: %{
           node: Macro.t(),
-          range: Sourceror.Range.t(),
+          range: Sourceror.Range.t() | nil,
           captures: Pattern.captures()
         }
 
   @doc """
-  Finds all occurrences of `pattern` in `source`.
+  Finds all occurrences of `pattern`.
+
+  The first argument can be a source string, a `Sourceror.Zipper`, or a raw AST.
 
   ## Options
 
@@ -25,30 +29,35 @@ defmodule ExAST.Patcher do
   Returns a list of matches with the matched node, its source range,
   and any captured values.
   """
-  @spec find_all(String.t(), String.t(), keyword()) :: [match()]
-  def find_all(source, pattern, opts \\ []) do
-    ast = Sourceror.parse_string!(source)
+  @spec find_all(String.t() | Zipper.t() | Macro.t(), String.t(), keyword()) :: [match()]
+  def find_all(input, pattern, opts \\ [])
 
-    matches =
-      if Pattern.multi_node?(pattern) do
-        collect_sequence_matches(ast, pattern)
-      else
-        zipper = Sourceror.Zipper.zip(ast)
-        collect_matches(zipper, pattern, [])
-      end
+  def find_all(source, pattern, opts) when is_binary(source) do
+    source |> Sourceror.parse_string!() |> do_find_all(pattern, opts)
+  end
 
-    apply_where(matches, opts)
+  def find_all(%Zipper{} = zipper, pattern, opts) do
+    zipper |> Zipper.topmost_root() |> do_find_all(pattern, opts)
+  end
+
+  def find_all(ast, pattern, opts) do
+    do_find_all(ast, pattern, opts)
   end
 
   @doc """
-  Replaces all occurrences of `pattern` with `replacement` in `source`.
+  Replaces all occurrences of `pattern` with `replacement`.
+
+  When given a source string, returns a modified source string with
+  formatting preserved. When given a zipper or AST, returns modified AST.
 
   Captures from the pattern are substituted into the replacement template.
   Accepts the same `:inside` / `:not_inside` options as `find_all/3`.
-  Returns the modified source string.
   """
   @spec replace_all(String.t(), String.t(), String.t(), keyword()) :: String.t()
-  def replace_all(source, pattern, replacement, opts \\ []) do
+  @spec replace_all(Zipper.t() | Macro.t(), String.t(), String.t(), keyword()) :: Macro.t()
+  def replace_all(input, pattern, replacement, opts \\ [])
+
+  def replace_all(source, pattern, replacement, opts) when is_binary(source) do
     replacement_ast = Code.string_to_quoted!(replacement)
     matches = find_all(source, pattern, opts)
 
@@ -61,30 +70,94 @@ defmodule ExAST.Patcher do
     Sourceror.patch_string(source, patches)
   end
 
-  defp restore_meta(ast) do
-    Macro.prewalk(ast, fn
-      {form, nil, args} -> {form, [], args}
-      other -> other
+  def replace_all(%Zipper{} = zipper, pattern, replacement, opts) do
+    zipper |> Zipper.topmost_root() |> do_replace_all_ast(pattern, replacement, opts)
+  end
+
+  def replace_all(ast, pattern, replacement, opts) do
+    do_replace_all_ast(ast, pattern, replacement, opts)
+  end
+
+  # --- Core find logic ---
+
+  defp do_find_all(ast, pattern, opts) do
+    matches =
+      if Pattern.multi_node?(pattern) do
+        collect_sequence_matches(ast, pattern)
+      else
+        ast |> Zipper.zip() |> collect_matches(pattern, [])
+      end
+
+    apply_where(matches, opts)
+  end
+
+  # --- Core replace logic (AST → AST) ---
+
+  defp do_replace_all_ast(ast, pattern, replacement, opts) do
+    replacement_ast = Code.string_to_quoted!(replacement)
+    matches = do_find_all(ast, pattern, opts)
+    matched_nodes = MapSet.new(matches, & &1.node)
+
+    Macro.prewalk(ast, fn node ->
+      maybe_replace_node(node, matched_nodes, pattern, replacement_ast)
     end)
   end
+
+  defp maybe_replace_node(node, matched_nodes, pattern, replacement_ast) do
+    if MapSet.member?(matched_nodes, node) do
+      case Pattern.match(node, pattern) do
+        {:ok, captures} ->
+          captures
+          |> strip_sourceror_meta()
+          |> then(&Pattern.substitute(replacement_ast, &1))
+          |> restore_meta()
+
+        :error ->
+          node
+      end
+    else
+      node
+    end
+  end
+
+  defp strip_sourceror_meta(captures) do
+    Map.new(captures, fn {key, value} -> {key, do_strip_sourceror_meta(value)} end)
+  end
+
+  defp do_strip_sourceror_meta({form, _meta, args}) when is_atom(form) do
+    {form, [], do_strip_sourceror_meta(args)}
+  end
+
+  defp do_strip_sourceror_meta({form, _meta, args}) do
+    {do_strip_sourceror_meta(form), [], do_strip_sourceror_meta(args)}
+  end
+
+  defp do_strip_sourceror_meta({left, right}) do
+    {do_strip_sourceror_meta(left), do_strip_sourceror_meta(right)}
+  end
+
+  defp do_strip_sourceror_meta(list) when is_list(list) do
+    Enum.map(list, &do_strip_sourceror_meta/1)
+  end
+
+  defp do_strip_sourceror_meta(other), do: other
 
   # --- Single-node matching ---
 
   defp collect_matches(nil, _pattern, acc), do: Enum.reverse(acc)
 
   defp collect_matches(zipper, pattern, acc) do
-    node = Sourceror.Zipper.node(zipper)
+    node = Zipper.node(zipper)
 
     case Pattern.match(node, pattern) do
       {:ok, captures} ->
-        range = Sourceror.get_range(node)
+        range = safe_range(node)
         ancestors = collect_ancestors(zipper)
-
         match = %{node: node, range: range, captures: captures, ancestors: ancestors}
-        zipper |> Sourceror.Zipper.skip() |> collect_matches(pattern, [match | acc])
+        zipper |> Zipper.skip() |> collect_matches(pattern, [match | acc])
 
       :error ->
-        zipper |> Sourceror.Zipper.next() |> collect_matches(pattern, acc)
+        zipper |> Zipper.next() |> collect_matches(pattern, acc)
     end
   end
 
@@ -147,28 +220,25 @@ defmodule ExAST.Patcher do
   end
 
   defp collect_ancestors_for_node(target_node, root_ast) do
-    zipper = Sourceror.Zipper.zip(root_ast)
-    find_node_ancestors(zipper, target_node)
+    root_ast |> Zipper.zip() |> find_node_ancestors(target_node)
   end
 
   defp find_node_ancestors(nil, _target), do: []
 
   defp find_node_ancestors(zipper, target) do
-    node = Sourceror.Zipper.node(zipper)
-
-    if node == target do
+    if Zipper.node(zipper) == target do
       collect_ancestors(zipper)
     else
-      find_node_ancestors(Sourceror.Zipper.next(zipper), target)
+      zipper |> Zipper.next() |> find_node_ancestors(target)
     end
   end
 
   # --- Shared helpers ---
 
   defp collect_ancestors(zipper) do
-    case Sourceror.Zipper.up(zipper) do
+    case Zipper.up(zipper) do
       nil -> []
-      parent -> [Sourceror.Zipper.node(parent) | collect_ancestors(parent)]
+      parent -> [Zipper.node(parent) | collect_ancestors(parent)]
     end
   end
 
@@ -196,5 +266,18 @@ defmodule ExAST.Patcher do
     Enum.reject(matches, fn %{ancestors: ancestors} ->
       Enum.any?(ancestors, &(Pattern.match(&1, pattern) != :error))
     end)
+  end
+
+  defp restore_meta(ast) do
+    Macro.prewalk(ast, fn
+      {form, nil, args} -> {form, [], args}
+      other -> other
+    end)
+  end
+
+  defp safe_range(node) do
+    Sourceror.get_range(node)
+  rescue
+    _ -> nil
   end
 end
