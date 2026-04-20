@@ -15,13 +15,13 @@ mix ex_ast.diff lib/old.ex lib/new.ex
 
 ```elixir
 def deps do
-  [{:ex_ast, "~> 0.3", only: [:dev, :test], runtime: false}]
+  [{:ex_ast, "~> 0.4", only: [:dev, :test], runtime: false}]
 end
 ```
 
 ## Pattern syntax
 
-Patterns are valid Elixir expressions parsed by `Code.string_to_quoted!/1`.
+Patterns are valid Elixir expressions, given as strings or `quote` blocks.
 Three rules:
 
 | Syntax | Meaning |
@@ -154,16 +154,18 @@ Example output:
 ```
 lib/old.ex ↔ lib/new.ex
 
-2:3 MOVE moved function {:def, :first, 0}
+L2 MOVE moved function def first/0
 
-2:3 UPDATE updated function {:def, :first, 0}
+L3 MOVE moved function def second/0
+
+L2 UPDATE updated function def first/0
   - def first, do: 1
   + def first, do: 10
 
-5:3 INSERT inserted function {:def, :fourth, 0}
+L5 INSERT inserted function def fourth/0
   + def fourth, do: 4
 
-3 edit(s)
+4 edit(s)
 ```
 
 What it detects:
@@ -193,10 +195,22 @@ ExAST.replace("lib/", "dbg(expr)", "expr")
 # Replace with context filter
 ExAST.replace("lib/", "IO.inspect(expr)", "expr", not_inside: "test _ do _ end")
 
-# Low-level: single string
+# Low-level: source string
 ExAST.Patcher.find_all(source_code, "IO.inspect(_)")
 ExAST.Patcher.find_all(source_code, "IO.inspect(_)", inside: "def _ do _ end")
 ExAST.Patcher.replace_all(source_code, "dbg(expr)", "expr")
+
+# Low-level: AST or zipper (returns AST instead of string)
+ast = Sourceror.parse_string!(source_code)
+ExAST.Patcher.find_all(ast, "IO.inspect(_)")
+ExAST.Patcher.replace_all(ast, "IO.inspect(expr)", "dbg(expr)")  #=> Macro.t()
+
+zipper = Sourceror.Zipper.zip(ast)
+ExAST.Patcher.find_all(zipper, "IO.inspect(_)")
+
+# Quoted expressions instead of strings
+ExAST.Patcher.find_all(source_code, quote(do: IO.inspect(_)))
+ExAST.Patcher.replace_all(ast, quote(do: IO.inspect(expr)), quote(do: dbg(expr)))
 
 # Syntax-aware diff
 result = ExAST.diff(old_source, new_source)
