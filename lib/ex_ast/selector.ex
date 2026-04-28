@@ -9,10 +9,23 @@ defmodule ExAST.Selector.Predicate do
 
   defstruct [:relation, :pattern, negated?: false]
 
-  @type relation :: :parent | :ancestor | :has_child | :has_descendant
+  @type relation ::
+          :parent
+          | :ancestor
+          | :has_child
+          | :has_descendant
+          | :any
+          | :all
+          | :follows
+          | :precedes
+          | :immediately_follows
+          | :immediately_precedes
+          | :first
+          | :last
+          | :nth
   @type t :: %__MODULE__{
           relation: relation(),
-          pattern: ExAST.Pattern.pattern(),
+          pattern: ExAST.Pattern.pattern() | [t()] | pos_integer() | nil,
           negated?: boolean()
         }
 end
@@ -51,24 +64,38 @@ defmodule ExAST.Selector do
   defstruct steps: [], filters: []
 
   @type relation :: :self | :child | :descendant
-  @type step :: {relation(), ExAST.Pattern.pattern()}
+  @type step :: {relation(), ExAST.Pattern.pattern() | [ExAST.Pattern.pattern()]}
   @type t :: %__MODULE__{steps: [step()], filters: [Predicate.t()]}
 
   @doc "Starts a selector at `pattern`."
-  @spec pattern(ExAST.Pattern.pattern()) :: t()
-  def pattern(pattern), do: %__MODULE__{steps: [{:self, pattern}]}
+  @spec pattern(ExAST.Pattern.pattern() | [ExAST.Pattern.pattern()]) :: t()
+  def pattern(pattern), do: %__MODULE__{steps: [{:self, compile_pattern(pattern)}]}
 
   @doc "Alias for `pattern/1`."
-  @spec selector(ExAST.Pattern.pattern()) :: t()
+  @spec selector(ExAST.Pattern.pattern() | [ExAST.Pattern.pattern()]) :: t()
   def selector(pattern), do: pattern(pattern)
 
+  @doc "SQL-like alias for `pattern/1`."
+  @spec from(ExAST.Pattern.pattern() | [ExAST.Pattern.pattern()]) :: t()
+  def from(pattern), do: pattern(pattern)
+
   @doc "Selects direct semantic children matching `pattern`."
-  @spec child(t(), ExAST.Pattern.pattern()) :: t()
-  def child(%__MODULE__{} = selector, pattern), do: add_step(selector, :child, pattern)
+  @spec child(t(), ExAST.Pattern.pattern() | [ExAST.Pattern.pattern()]) :: t()
+  def child(%__MODULE__{} = selector, pattern),
+    do: add_step(selector, :child, compile_pattern(pattern))
 
   @doc "Selects semantic descendants matching `pattern`."
-  @spec descendant(t(), ExAST.Pattern.pattern()) :: t()
-  def descendant(%__MODULE__{} = selector, pattern), do: add_step(selector, :descendant, pattern)
+  @spec descendant(t(), ExAST.Pattern.pattern() | [ExAST.Pattern.pattern()]) :: t()
+  def descendant(%__MODULE__{} = selector, pattern),
+    do: add_step(selector, :descendant, compile_pattern(pattern))
+
+  @doc "SQL-like alias for `descendant/2`."
+  @spec find(t(), ExAST.Pattern.pattern() | [ExAST.Pattern.pattern()]) :: t()
+  def find(%__MODULE__{} = selector, pattern), do: descendant(selector, pattern)
+
+  @doc "SQL-like alias for `child/2`."
+  @spec find_child(t(), ExAST.Pattern.pattern() | [ExAST.Pattern.pattern()]) :: t()
+  def find_child(%__MODULE__{} = selector, pattern), do: child(selector, pattern)
 
   @doc "Adds a predicate filter without changing the selected node."
   defmacro where(selector, expr) do
@@ -98,6 +125,12 @@ defmodule ExAST.Selector do
   def ancestor(%__MODULE__{} = selector, pattern),
     do: where_predicate(selector, ancestor(pattern))
 
+  @doc "SQL-like alias for `ancestor/1` and `ancestor/2`."
+  @spec inside(ExAST.Pattern.pattern()) :: Predicate.t()
+  @spec inside(t(), ExAST.Pattern.pattern()) :: t()
+  def inside(pattern), do: ancestor(pattern)
+  def inside(%__MODULE__{} = selector, pattern), do: ancestor(selector, pattern)
+
   @doc "Builds or applies a direct semantic child predicate."
   @spec has_child(ExAST.Pattern.pattern()) :: Predicate.t()
   @spec has_child(t(), ExAST.Pattern.pattern()) :: t()
@@ -120,6 +153,48 @@ defmodule ExAST.Selector do
   def has(pattern), do: has_descendant(pattern)
   def has(%__MODULE__{} = selector, pattern), do: has_descendant(selector, pattern)
 
+  @doc "SQL-like alias for `has_descendant/1` and `has_descendant/2`."
+  @spec contains(ExAST.Pattern.pattern()) :: Predicate.t()
+  @spec contains(t(), ExAST.Pattern.pattern()) :: t()
+  def contains(pattern), do: has_descendant(pattern)
+  def contains(%__MODULE__{} = selector, pattern), do: has_descendant(selector, pattern)
+
+  @doc "Matches when a previous sibling matches `pattern`."
+  @spec follows(ExAST.Pattern.pattern()) :: Predicate.t()
+  def follows(pattern), do: predicate(:follows, pattern)
+
+  @doc "Matches when a following sibling matches `pattern`."
+  @spec precedes(ExAST.Pattern.pattern()) :: Predicate.t()
+  def precedes(pattern), do: predicate(:precedes, pattern)
+
+  @doc "Matches when the immediately previous sibling matches `pattern`."
+  @spec immediately_follows(ExAST.Pattern.pattern()) :: Predicate.t()
+  def immediately_follows(pattern), do: predicate(:immediately_follows, pattern)
+
+  @doc "Matches when the immediately following sibling matches `pattern`."
+  @spec immediately_precedes(ExAST.Pattern.pattern()) :: Predicate.t()
+  def immediately_precedes(pattern), do: predicate(:immediately_precedes, pattern)
+
+  @doc "Matches the first semantic child in its parent."
+  @spec first() :: Predicate.t()
+  def first, do: predicate(:first, nil)
+
+  @doc "Matches the last semantic child in its parent."
+  @spec last() :: Predicate.t()
+  def last, do: predicate(:last, nil)
+
+  @doc "Matches the nth semantic child in its parent, using 1-based indexing."
+  @spec nth(pos_integer()) :: Predicate.t()
+  def nth(index) when is_integer(index) and index > 0, do: predicate(:nth, index)
+
+  @doc "Matches when any nested predicate matches."
+  @spec any([Predicate.t()]) :: Predicate.t()
+  def any(predicates) when is_list(predicates), do: predicate(:any, predicates)
+
+  @doc "Matches when all nested predicates match."
+  @spec all([Predicate.t()]) :: Predicate.t()
+  def all(predicates) when is_list(predicates), do: predicate(:all, predicates)
+
   @doc "Negates a predicate for use with `where/2`."
   @spec not Predicate.t() :: Predicate.t()
   def not (%Predicate{} = predicate), do: %{predicate | negated?: Kernel.not(predicate.negated?)}
@@ -131,13 +206,39 @@ defmodule ExAST.Selector do
   defp build_predicate_from_ast({:not, _, [expr]}),
     do: not build_predicate_from_ast(unwrap_block(expr))
 
-  defp build_predicate_from_ast({name, _, [pattern]})
-       when name in [:parent, :ancestor, :has_child] do
-    apply(__MODULE__, name, [pattern])
+  defp build_predicate_from_ast({:or, _, [left, right]}),
+    do: any([build_predicate_from_ast(left), build_predicate_from_ast(right)])
+
+  defp build_predicate_from_ast({:and, _, [left, right]}),
+    do: all([build_predicate_from_ast(left), build_predicate_from_ast(right)])
+
+  defp build_predicate_from_ast({:any, _, [predicates]}),
+    do: any(Enum.map(list_ast_to_list(predicates), &build_predicate_from_ast/1))
+
+  defp build_predicate_from_ast({:all, _, [predicates]}),
+    do: all(Enum.map(list_ast_to_list(predicates), &build_predicate_from_ast/1))
+
+  defp build_predicate_from_ast({name, _, []}) when name in [:first, :last] do
+    apply(__MODULE__, name, [])
   end
 
-  defp build_predicate_from_ast({name, _, [pattern]}) when name in [:has_descendant, :has] do
-    apply(__MODULE__, :has_descendant, [pattern])
+  defp build_predicate_from_ast({:nth, _, [index]}) when is_integer(index), do: nth(index)
+
+  defp build_predicate_from_ast({name, _, [pattern]})
+       when name in [
+              :parent,
+              :ancestor,
+              :inside,
+              :has_child,
+              :has_descendant,
+              :has,
+              :contains,
+              :follows,
+              :precedes,
+              :immediately_follows,
+              :immediately_precedes
+            ] do
+    apply(__MODULE__, name, [pattern])
   end
 
   defp build_predicate_from_ast(%Predicate{} = predicate), do: predicate
@@ -147,6 +248,12 @@ defmodule ExAST.Selector do
           "unsupported selector predicate expression: #{Macro.to_string(ast)}"
   end
 
+  defp list_ast_to_list(list) when is_list(list), do: list
+
+  defp list_ast_to_list(ast) do
+    raise ArgumentError, "expected predicate list, got: #{Macro.to_string(ast)}"
+  end
+
   defp unwrap_block({:__block__, _, [expr]}), do: expr
   defp unwrap_block(expr), do: expr
 
@@ -154,7 +261,27 @@ defmodule ExAST.Selector do
     %{selector | filters: filters ++ [predicate]}
   end
 
-  defp predicate(relation, pattern) do
-    %Predicate{relation: relation, pattern: pattern}
+  defp predicate(relation, patterns) when relation in [:any, :all] do
+    %Predicate{relation: relation, pattern: patterns}
   end
+
+  defp predicate(relation, nil) when relation in [:first, :last] do
+    %Predicate{relation: relation, pattern: nil}
+  end
+
+  defp predicate(:nth = relation, index) when is_integer(index) do
+    %Predicate{relation: relation, pattern: index}
+  end
+
+  defp predicate(relation, pattern) do
+    %Predicate{relation: relation, pattern: compile_pattern(pattern)}
+  end
+
+  defp compile_pattern(pattern) when is_binary(pattern), do: Code.string_to_quoted!(pattern)
+
+  defp compile_pattern(patterns) when is_list(patterns) do
+    {:__ex_ast_any_patterns__, Enum.map(patterns, &compile_pattern/1)}
+  end
+
+  defp compile_pattern(pattern), do: pattern
 end

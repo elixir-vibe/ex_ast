@@ -1,7 +1,7 @@
 defmodule ExAST.MixProject do
   use Mix.Project
 
-  @version "0.6.0"
+  @version "0.7.0"
   @source_url "https://github.com/dannote/ex_ast"
 
   def project do

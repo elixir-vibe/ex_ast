@@ -1,12 +1,32 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
+
+### Added
+
+- **SQL-like query API** via `ExAST.Query`: `from/1`, `where/2`, `find/2`,
+  `find_child/2`, `contains/1`, `inside/1`, sibling predicates
+  (`follows/1`, `precedes/1`, `immediately_follows/1`,
+  `immediately_precedes/1`), positional predicates (`first/0`, `last/0`,
+  `nth/1`), and boolean predicate combinators (`any/1`, `all/1`).
+- **Selector alternatives** — query starts can now accept a list of alternative
+  patterns, e.g. `from(["def _ do ... end", "defp _ do ... end"])`.
+- **Search limits and broad-query guard** — `ExAST.search/3` and
+  `mix ex_ast.search` now support `limit: n` / `--limit n` and refuse
+  unbounded `from("_")` searches unless `allow_broad: true` / `--allow-broad`
+  is passed.
+- **Query-style CLI flags** — `mix ex_ast.search` and `mix ex_ast.replace` now
+  support `--contains`, sibling filters (`--follows`, `--precedes`,
+  `--immediately-follows`, `--immediately-precedes`), and position filters
+  (`--first`, `--last`, `--nth`).
 
 ### Fixed
 
 - **Selector negation now works Ecto-style without import hacks** — `where(not ...)`
   is rewritten by the selector DSL, so users no longer need
   `import Kernel, except: [not: 1]`.
+- **Search result rendering** no longer fails when the current project formatter
+  config references unavailable `import_deps`.
 - **Selector descendant traversal** now walks nested AST shapes reliably,
   fixing missed matches for remote calls nested inside assignments and control flow.
 - **Alias-aware matching** expands local `alias` directives so canonical remote-call
@@ -24,7 +44,6 @@
 - **CSS-like AST selectors** — build relationship-aware selectors with
   `ExAST.Selector`:
   ```elixir
-  import Kernel, except: [not: 1]
   import ExAST.Selector
 
   pattern("defmodule _ do ... end")

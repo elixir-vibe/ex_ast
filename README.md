@@ -15,7 +15,7 @@ mix ex_ast.diff lib/old.ex lib/new.ex
 
 ```elixir
 def deps do
-  [{:ex_ast, "~> 0.6", only: [:dev, :test], runtime: false}]
+  [{:ex_ast, "~> 0.7", only: [:dev, :test], runtime: false}]
 end
 ```
 
@@ -87,8 +87,14 @@ mix ex_ast.search 'IO.inspect(expr)' --ancestor 'def _ do ... end'
 
 # Find functions that contain a transaction but no debug output
 mix ex_ast.search 'def name do ... end' \
-  --has 'Repo.transaction(_)' \
-  --not-has 'IO.inspect(_)'
+  --contains 'Repo.transaction(_)' \
+  --not-contains 'IO.inspect(...)'
+
+# Find calls that follow an earlier statement in the same block
+mix ex_ast.search 'Repo.delete(record)' --follows 'record = Repo.get!(_, _)'
+
+# Limit broad searches
+mix ex_ast.search '_' lib/ --limit 100
 
 # Replace only direct function-body debug calls
 mix ex_ast.replace 'IO.inspect(expr)' 'Logger.debug(inspect(expr))' lib/ \
@@ -108,52 +114,74 @@ Available CLI filters:
 | `--ancestor`, `--not-ancestor` | Any semantic ancestor |
 | `--inside`, `--not-inside` | Aliases for ancestor filters |
 | `--has-child`, `--not-has-child` | Direct semantic child |
-| `--has-descendant`, `--not-has-descendant` | Any semantic descendant |
-| `--has`, `--not-has` | Aliases for descendant filters |
+| `--contains`, `--not-contains` | Any semantic descendant |
+| `--has-descendant`, `--not-has-descendant` | Aliases for contains filters |
+| `--has`, `--not-has` | Aliases for contains filters |
+| `--follows`, `--not-follows` | Previous sibling in the same block |
+| `--precedes`, `--not-precedes` | Following sibling in the same block |
+| `--immediately-follows`, `--not-immediately-follows` | Immediately previous sibling |
+| `--immediately-precedes`, `--not-immediately-precedes` | Immediately following sibling |
+| `--first`, `--not-first` | First sibling |
+| `--last`, `--not-last` | Last sibling |
+| `--nth`, `--not-nth` | 1-based sibling position |
 
-### Selectors
+### Query API
 
-Use `ExAST.Selector` when a match depends on CSS-like AST relationships:
-
-```elixir
-import ExAST.Selector
-
-selector =
-  pattern("defmodule _ do ... end")
-  |> descendant("def _ do ... end")
-  |> child("IO.inspect(_)")
-
-ExAST.search("lib/", selector)
-```
-
-Use `where/2` with predicates to keep or reject the selected node without
-changing what gets returned:
+Use `ExAST.Query` when a match depends on AST relationships:
 
 ```elixir
-import ExAST.Selector
+import ExAST.Query
 
-selector =
-  pattern("def _ do ... end")
-  |> where(has_descendant("Repo.transaction(_)"))
-  |> where(not(has_descendant("IO.inspect(_)")))
+query =
+  from("def _ do ... end")
+  |> where(contains("Repo.transaction(_)"))
+  |> where(not contains("IO.inspect(...)"))
+
+ExAST.search("lib/", query)
 ```
 
-Available relationships and predicates:
+Queries select nodes with `from/1`, move through the tree with `find/2` and
+`find_child/2`, and filter the current selection with `where/2` predicates.
+`where/2` accepts predicate expressions and rewrites `not(...)` the way an
+Ecto-style DSL would, so you can use bare `not(...)` directly.
+
+```elixir
+import ExAST.Query
+
+query =
+  from("IO.inspect(value)")
+  |> where(inside("def _ do ... end"))
+  |> where(not parent("if _ do ... end"))
+```
+
+Available query functions and predicates:
 
 | Function | Meaning |
 |----------|---------|
-| `child/2` | Select direct semantic children matching the pattern |
-| `descendant/2` | Select nested semantic descendants matching the pattern |
+| `from/1` | Start from one pattern, or a list of alternative patterns |
+| `find/2` | Select nested descendants matching the pattern |
+| `find_child/2` | Select direct semantic children matching the pattern |
 | `where/2` | Add a predicate filter without changing the selected node |
-| `parent/1` / `parent/2` | Match/apply a direct semantic parent predicate |
-| `ancestor/1` / `ancestor/2` | Match/apply a semantic ancestor predicate |
-| `has_child/1` / `has_child/2` | Match/apply a direct semantic child predicate |
-| `has_descendant/1`, `has/1` | Match a nested descendant predicate |
-| `has_descendant/2`, `has/2` | Apply a nested descendant predicate |
+| `contains/1` | Match a nested descendant predicate |
+| `has_child/1` | Match a direct semantic child predicate |
+| `inside/1` | Match a semantic ancestor predicate |
+| `parent/1` | Match a direct semantic parent predicate |
+| `follows/1` / `precedes/1` | Match previous/following siblings in the same block |
+| `immediately_follows/1` / `immediately_precedes/1` | Match adjacent siblings |
+| `first/0`, `last/0`, `nth/1` | Match sibling position |
+| `any/1`, `all/1` | Combine predicates with OR/AND |
 | `not/1` | Negate a predicate for `where/2` |
 
-`where/2` accepts predicate expressions and rewrites `not(...)` the way an Ecto-style
-DSL would, so you can use bare `not(...)` directly.
+`ExAST.Selector` remains available as the lower-level CSS-like API with
+`pattern/1`, `descendant/2`, `child/2`, `ancestor/1`, and `has_descendant/1`.
+
+Broad queries like `from("_")` match every AST node. Project-wide searches refuse
+those unless you pass a `limit` or explicitly opt in with `allow_broad: true`:
+
+```elixir
+ExAST.search("lib/", from("_"), limit: 100)
+ExAST.search("lib/", from("_"), allow_broad: true)
+```
 
 ## Examples
 

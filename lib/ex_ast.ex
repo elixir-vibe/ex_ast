@@ -29,15 +29,15 @@ defmodule ExAST do
       # Match piped and direct calls interchangeably
       ExAST.search("lib/", "Enum.map(_, _)")  # also finds `data |> Enum.map(f)`
 
-      # CSS-like selector relationships
-      import ExAST.Selector
+      # Relationship-aware queries
+      import ExAST.Query
 
-      selector =
-        pattern("defmodule _ do ... end")
-        |> descendant("def _ do ... end")
-        |> child("IO.inspect(_)")
+      query =
+        from("def _ do ... end")
+        |> where(contains("Repo.transaction(_)"))
+        |> where(not contains("IO.inspect(...)"))
 
-      ExAST.search("lib/", selector)
+      ExAST.search("lib/", query)
 
       # Syntax-aware diff
       result = ExAST.diff(old_source, new_source)
@@ -62,12 +62,24 @@ defmodule ExAST do
 
   Returns a list of match maps with `:file`, `:line`, `:source`, and `:captures`.
   Accepts `:inside` and `:not_inside` options to filter by context.
+
+  Options:
+    * `:limit` — stop after returning this many matches
+    * `:allow_broad` — allow unbounded broad searches like `from("_")`
   """
   @spec search(String.t() | [String.t()], String.t() | ExAST.Selector.t(), keyword()) :: [match()]
   def search(paths, pattern, opts \\ []) do
-    paths
-    |> resolve_paths()
-    |> Enum.flat_map(&search_file(&1, pattern, opts))
+    files = resolve_paths(paths)
+    validate_broad_search!(pattern, opts)
+    search_opts = Keyword.drop(opts, [:allow_broad, :limit])
+
+    case Keyword.get(opts, :limit) do
+      nil ->
+        Enum.flat_map(files, &search_file(&1, pattern, search_opts))
+
+      limit when is_integer(limit) and limit >= 0 ->
+        search_files_limited(files, pattern, search_opts, limit)
+    end
   end
 
   @doc """
@@ -116,19 +128,65 @@ defmodule ExAST do
     Diff.apply(result)
   end
 
-  defp search_file(file, pattern, opts) do
-    source = File.read!(file)
+  defp search_files_limited(_files, _pattern, _opts, 0), do: []
 
-    Patcher.find_all(source, pattern, opts)
+  defp search_files_limited(files, pattern, opts, limit) do
+    files
+    |> Enum.reduce_while([], fn file, acc ->
+      remaining = limit - length(acc)
+      matches = search_file(file, pattern, opts, remaining)
+      next = acc ++ matches
+
+      if length(next) >= limit do
+        {:halt, next}
+      else
+        {:cont, next}
+      end
+    end)
+  end
+
+  defp search_file(file, pattern, opts, limit \\ nil) do
+    source = File.read!(file)
+    lines = String.split(source, "\n", trim: false)
+
+    source
+    |> Patcher.find_all(pattern, opts)
+    |> maybe_take(limit)
     |> Enum.map(fn %{range: range, node: node, captures: captures} ->
       %{
         file: file,
-        line: range.start[:line],
-        source: Sourceror.to_string(node),
+        line: match_line(range),
+        source: source_fragment(lines, range) || node_to_string(node),
         captures: captures
       }
     end)
   end
+
+  defp maybe_take(matches, nil), do: matches
+  defp maybe_take(matches, limit), do: Enum.take(matches, limit)
+
+  defp validate_broad_search!(pattern, opts) do
+    if broad_pattern?(pattern) and is_nil(opts[:limit]) and opts[:allow_broad] != true do
+      raise ArgumentError, """
+      refusing broad query without a limit
+
+      from("_") matches every AST node and can be very expensive across files.
+      Use a narrower pattern, pass limit: 100, or pass allow_broad: true.
+      """
+    end
+  end
+
+  defp broad_pattern?("_"), do: true
+  defp broad_pattern?({:_, _meta, nil}), do: true
+
+  defp broad_pattern?(%ExAST.Selector{steps: [{:self, pattern} | _]}),
+    do: broad_pattern?(pattern)
+
+  defp broad_pattern?({:__ex_ast_any_patterns__, patterns}),
+    do: Enum.any?(patterns, &broad_pattern?/1)
+
+  defp broad_pattern?(patterns) when is_list(patterns), do: Enum.any?(patterns, &broad_pattern?/1)
+  defp broad_pattern?(_pattern), do: false
 
   defp replace_file(file, pattern, replacement, dry_run, where_opts) do
     source = File.read!(file)
@@ -141,6 +199,56 @@ defmodule ExAST do
       unless dry_run, do: File.write!(file, result)
       [{file, length(matches)}]
     end
+  end
+
+  defp match_line(%{start: start}) when is_list(start), do: start[:line] || 1
+  defp match_line(_range), do: 1
+
+  defp source_fragment(lines, %{start: start, end: end_}) when is_list(start) and is_list(end_) do
+    with start_line when is_integer(start_line) <- start[:line],
+         start_column when is_integer(start_column) <- start[:column],
+         end_line when is_integer(end_line) <- end_[:line],
+         end_column when is_integer(end_column) <- end_[:column] do
+      fragment_lines(lines, start_line, start_column, end_line, end_column)
+    else
+      _ -> nil
+    end
+  end
+
+  defp source_fragment(_source, _range), do: nil
+
+  defp fragment_lines(lines, line, start_column, line, end_column) do
+    lines
+    |> Enum.at(line - 1, "")
+    |> String.slice((start_column - 1)..(end_column - 2)//1)
+  end
+
+  defp fragment_lines(lines, start_line, start_column, end_line, end_column) do
+    lines
+    |> Enum.slice((start_line - 1)..(end_line - 1)//1)
+    |> trim_fragment_lines(start_column, end_column)
+    |> Enum.join("\n")
+  end
+
+  defp trim_fragment_lines([], _start_column, _end_column), do: nil
+
+  defp trim_fragment_lines([first | rest], start_column, end_column) do
+    {middle, [last]} = Enum.split(rest, max(length(rest) - 1, 0))
+
+    [String.slice(first, (start_column - 1)..-1//1)] ++
+      middle ++ [String.slice(last, 0..(end_column - 2)//1)]
+  end
+
+  defp node_to_string(node) do
+    Sourceror.to_string(node, locals_without_parens: [])
+  rescue
+    _ -> macro_or_inspect(node)
+  end
+
+  defp macro_or_inspect(node) do
+    Macro.to_string(node)
+  rescue
+    _ -> inspect(node)
   end
 
   defp resolve_paths(paths) when is_list(paths), do: Enum.flat_map(paths, &resolve_paths/1)

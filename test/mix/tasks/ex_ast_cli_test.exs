@@ -109,6 +109,47 @@ defmodule Mix.Tasks.ExAstCliTest do
       refute output =~ "name: noisy"
       refute output =~ "name: plain"
     end
+
+    @tag :tmp_dir
+    test "supports query-style flags and limits", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+
+      File.write!(file, """
+      def run do
+        record = Repo.get!(User, id)
+        Logger.debug(record)
+        Repo.delete(record)
+      end
+      """)
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", [
+            "Repo.delete(record)",
+            file,
+            "--follows",
+            "record = Repo.get!(_, _)",
+            "--limit",
+            "1"
+          ])
+        end)
+
+      assert output =~ "Repo.delete(record)"
+      assert output =~ "1 match(es)"
+    end
+
+    @tag :tmp_dir
+    test "allows broad search with limit", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "defmodule A do\n  def run, do: :ok\nend\n")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["_", file, "--limit", "2"])
+        end)
+
+      assert output =~ "1 match(es)"
+    end
   end
 
   describe "mix ex_ast.replace selector flags" do

@@ -10,13 +10,21 @@ defmodule Mix.Tasks.ExAst.Search do
   ## Options
 
     * `--count` — only print the number of matches
+    * `--limit n` — stop after returning this many matches
+    * `--allow-broad` — allow unbounded broad searches like `_`
     * `--inside 'pattern'` — only match inside ancestors matching this pattern
     * `--not-inside 'pattern'` — reject matches inside ancestors matching this pattern
     * `--parent 'pattern'` / `--not-parent 'pattern'` — filter by direct semantic parent
     * `--ancestor 'pattern'` / `--not-ancestor 'pattern'` — filter by semantic ancestor
     * `--has-child 'pattern'` / `--not-has-child 'pattern'` — filter by direct semantic child
-    * `--has-descendant 'pattern'` / `--not-has-descendant 'pattern'` — filter by semantic descendant
-    * `--has 'pattern'` / `--not-has 'pattern'` — aliases for descendant filters
+    * `--contains 'pattern'` / `--not-contains 'pattern'` — filter by semantic descendant
+    * `--has-descendant 'pattern'` / `--not-has-descendant 'pattern'` — aliases for contains filters
+    * `--has 'pattern'` / `--not-has 'pattern'` — aliases for contains filters
+    * `--follows 'pattern'` / `--not-follows 'pattern'` — filter by earlier sibling
+    * `--precedes 'pattern'` / `--not-precedes 'pattern'` — filter by later sibling
+    * `--immediately-follows 'pattern'` / `--not-immediately-follows 'pattern'` — filter by previous sibling
+    * `--immediately-precedes 'pattern'` / `--not-immediately-precedes 'pattern'` — filter by next sibling
+    * `--first` / `--not-first`, `--last` / `--not-last`, `--nth n` / `--not-nth n` — filter by sibling position
 
   ## Pattern syntax
 
@@ -37,7 +45,9 @@ defmodule Mix.Tasks.ExAst.Search do
       mix ex_ast.search --inside 'def handle_call(_, _, _) do _ end' 'Repo.get!(_)'
       mix ex_ast.search --not-inside 'test _ do _ end' 'IO.inspect(_)'
       mix ex_ast.search 'IO.inspect(_)' --parent 'def _ do ... end'
-      mix ex_ast.search 'def name do ... end' --has 'Repo.transaction(_)' --not-has 'IO.inspect(_)'
+      mix ex_ast.search 'def name do ... end' --contains 'Repo.transaction(_)' --not-contains 'IO.inspect(...)'
+      mix ex_ast.search 'Repo.delete(record)' --follows 'record = Repo.get!(_, _)'
+      mix ex_ast.search '_' lib/ --limit 100
   """
 
   use Mix.Task
@@ -47,7 +57,10 @@ defmodule Mix.Tasks.ExAst.Search do
   @impl Mix.Task
   def run(args) do
     {opts, positional, _} =
-      OptionParser.parse(args, strict: [count: :boolean] ++ SelectorOptions.switches())
+      OptionParser.parse(args,
+        strict:
+          [count: :boolean, limit: :integer, allow_broad: :boolean] ++ SelectorOptions.switches()
+      )
 
     case positional do
       [pattern | paths] ->
@@ -62,8 +75,18 @@ defmodule Mix.Tasks.ExAst.Search do
   defp do_search(paths, pattern, opts) do
     validate_pattern!(pattern)
 
-    search_pattern = SelectorOptions.pattern(pattern, opts, &validate_pattern!/1, [:count])
-    search_opts = SelectorOptions.where_opts(opts, [:count])
+    search_pattern =
+      SelectorOptions.pattern(pattern, opts, &validate_pattern!/1, [
+        :count,
+        :limit,
+        :allow_broad
+      ])
+
+    search_opts =
+      opts
+      |> SelectorOptions.where_opts([:count, :limit, :allow_broad])
+      |> Keyword.merge(Keyword.take(opts, [:limit, :allow_broad]))
+
     results = ExAST.search(paths, search_pattern, search_opts)
 
     if opts[:count] do

@@ -608,5 +608,36 @@ defmodule ExAST.SelectorTest do
       assert match.source == "IO.inspect(:ok)"
       assert match.captures[:value] == :ok
     end
+
+    test "ExAST.search falls back when formatter config cannot be loaded" do
+      tmp_dir =
+        System.tmp_dir!()
+        |> Path.join("ex_ast_selector_fallback_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(tmp_dir)
+      on_exit(fn -> File.rm_rf!(tmp_dir) end)
+
+      File.write!(Path.join(tmp_dir, ".formatter.exs"), "[import_deps: [:missing_dep]]")
+
+      file = Path.join(tmp_dir, "sample.ex")
+
+      File.write!(file, """
+      defmodule Example do
+        def run do
+          IO.inspect(:ok)
+        end
+      end
+      """)
+
+      selector =
+        pattern("defmodule Example do ... end")
+        |> descendant("IO.inspect(value)")
+
+      [match] = ExAST.search(file, selector)
+      assert match.file == file
+      assert match.line == 3
+      assert match.source == "IO.inspect(:ok)"
+      assert match.captures[:value] == :ok
+    end
   end
 end

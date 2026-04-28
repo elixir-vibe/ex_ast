@@ -251,7 +251,7 @@ defmodule ExAST.Patcher do
          alias_env
        ) do
     root_ast
-    |> selector_descendants(include_self: true)
+    |> selector_descendant_entries(include_self: true)
     |> Enum.flat_map(&selector_match(&1, pattern, root_ast, %{}, alias_env))
     |> follow_selector_steps(steps, root_ast, alias_env)
     |> apply_selector_filters(filters, root_ast, alias_env)
@@ -262,19 +262,25 @@ defmodule ExAST.Patcher do
 
   defp follow_selector_steps(matches, [{relation, pattern} | steps], root_ast, alias_env) do
     matches
-    |> Enum.flat_map(fn %{node: node, captures: captures} ->
+    |> Enum.flat_map(fn %{node: node, ancestors: ancestors, captures: captures} ->
       node
-      |> selector_candidates(relation)
+      |> selector_candidate_entries(ancestors, relation)
       |> Enum.flat_map(&selector_match(&1, pattern, root_ast, captures, alias_env))
     end)
     |> follow_selector_steps(steps, root_ast, alias_env)
   end
 
-  defp selector_candidates(node, :child), do: semantic_children(node)
-  defp selector_candidates(node, :descendant), do: selector_descendants(node, include_self: false)
+  defp selector_candidate_entries(node, ancestors, :child) do
+    node
+    |> semantic_children()
+    |> Enum.map(&{&1, [node | ancestors]})
+  end
 
-  defp selector_match(node, pattern, root_ast, captures, alias_env) do
-    case Pattern.match(node, pattern, alias_env) do
+  defp selector_candidate_entries(node, ancestors, :descendant),
+    do: selector_descendant_entries(node, ancestors, include_self: false)
+
+  defp selector_match({node, _ancestors}, pattern, root_ast, captures, alias_env) do
+    case pattern_match(node, pattern, alias_env) do
       {:ok, new_captures} ->
         case merge_captures(captures, new_captures) do
           {:ok, captures} ->
@@ -317,38 +323,137 @@ defmodule ExAST.Patcher do
     end
   end
 
+  defp selector_filter?(match, :any, predicates, root_ast, alias_env),
+    do: Enum.any?(predicates, &selector_filter?(match, &1, root_ast, alias_env))
+
+  defp selector_filter?(match, :all, predicates, root_ast, alias_env),
+    do: Enum.all?(predicates, &selector_filter?(match, &1, root_ast, alias_env))
+
   defp selector_filter?(%{ancestors: [parent | _]}, :parent, pattern, _root_ast, alias_env),
-    do: Pattern.match(parent, pattern, alias_env) != :error
+    do: pattern_match(parent, pattern, alias_env) != :error
 
   defp selector_filter?(%{ancestors: []}, :parent, _pattern, _root_ast, _alias_env), do: false
 
   defp selector_filter?(%{ancestors: ancestors}, :ancestor, pattern, _root_ast, alias_env),
-    do: Enum.any?(ancestors, &(Pattern.match(&1, pattern, alias_env) != :error))
+    do: Enum.any?(ancestors, &(pattern_match(&1, pattern, alias_env) != :error))
 
   defp selector_filter?(%{node: node}, :has_child, pattern, _root_ast, alias_env),
-    do: Enum.any?(semantic_children(node), &(Pattern.match(&1, pattern, alias_env) != :error))
+    do: Enum.any?(semantic_children(node), &(pattern_match(&1, pattern, alias_env) != :error))
 
   defp selector_filter?(%{node: node}, :has_descendant, pattern, _root_ast, alias_env),
     do:
       node
       |> selector_descendants(include_self: false)
-      |> Enum.any?(&(Pattern.match(&1, pattern, alias_env) != :error))
+      |> Enum.any?(&(pattern_match(&1, pattern, alias_env) != :error))
+
+  defp selector_filter?(match, :follows, pattern, _root_ast, alias_env) do
+    match
+    |> siblings_before()
+    |> Enum.any?(&(pattern_match(&1, pattern, alias_env) != :error))
+  end
+
+  defp selector_filter?(match, :precedes, pattern, _root_ast, alias_env) do
+    match
+    |> siblings_after()
+    |> Enum.any?(&(pattern_match(&1, pattern, alias_env) != :error))
+  end
+
+  defp selector_filter?(match, :immediately_follows, pattern, _root_ast, alias_env) do
+    case List.last(siblings_before(match)) do
+      nil -> false
+      node -> pattern_match(node, pattern, alias_env) != :error
+    end
+  end
+
+  defp selector_filter?(match, :immediately_precedes, pattern, _root_ast, alias_env) do
+    case List.first(siblings_after(match)) do
+      nil -> false
+      node -> pattern_match(node, pattern, alias_env) != :error
+    end
+  end
+
+  defp selector_filter?(match, :first, _pattern, _root_ast, _alias_env),
+    do: sibling_position(match) == 0
+
+  defp selector_filter?(match, :last, _pattern, _root_ast, _alias_env) do
+    case sibling_context(match) do
+      {_siblings, nil} -> false
+      {siblings, index} -> index == length(siblings) - 1
+    end
+  end
+
+  defp selector_filter?(match, :nth, index, _root_ast, _alias_env),
+    do: sibling_position(match) == index - 1
+
+  defp pattern_match(node, {:__ex_ast_any_patterns__, patterns}, alias_env) do
+    Enum.reduce_while(patterns, :error, fn pattern, :error ->
+      case Pattern.match(node, pattern, alias_env) do
+        {:ok, captures} -> {:halt, {:ok, captures}}
+        :error -> {:cont, :error}
+      end
+    end)
+  end
+
+  defp pattern_match(node, pattern, alias_env), do: Pattern.match(node, pattern, alias_env)
+
+  defp siblings_before(match) do
+    case sibling_context(match) do
+      {siblings, index} when is_integer(index) -> Enum.take(siblings, index)
+      _ -> []
+    end
+  end
+
+  defp siblings_after(match) do
+    case sibling_context(match) do
+      {siblings, index} when is_integer(index) -> Enum.drop(siblings, index + 1)
+      _ -> []
+    end
+  end
+
+  defp sibling_position(match) do
+    case sibling_context(match) do
+      {_siblings, index} when is_integer(index) -> index
+      _ -> nil
+    end
+  end
+
+  defp sibling_context(%{node: node, ancestors: [parent | _]}) do
+    siblings = semantic_children(parent)
+    {siblings, Enum.find_index(siblings, &(&1 == node))}
+  end
+
+  defp sibling_context(_match), do: {[], nil}
 
   defp selector_result(%{node: node, range: range, captures: captures, ancestors: ancestors}) do
     %{node: node, range: range, captures: captures, ancestors: ancestors}
   end
 
   defp selector_descendants(node, opts) do
+    node
+    |> selector_descendant_entries(opts)
+    |> Enum.map(&elem(&1, 0))
+  end
+
+  defp selector_descendant_entries(node, opts),
+    do: selector_descendant_entries(node, [], opts)
+
+  defp selector_descendant_entries(node, ancestors, opts) do
+    semantic_children = semantic_children(node)
+
     descendants =
       node
-      |> Macro.prewalk([], fn child, acc -> {child, [child | acc]} end)
-      |> elem(1)
-      |> Enum.reverse()
+      |> ast_children()
+      |> Enum.flat_map(fn child ->
+        child_ancestors =
+          if Enum.member?(semantic_children, child), do: [node | ancestors], else: ancestors
+
+        selector_descendant_entries(child, child_ancestors, include_self: true)
+      end)
 
     if Keyword.fetch!(opts, :include_self) do
-      descendants
+      [{node, ancestors} | descendants]
     else
-      tl(descendants)
+      descendants
     end
   end
 
@@ -379,18 +484,24 @@ defmodule ExAST.Patcher do
     end)
   end
 
+  defp ast_children({:__block__, _meta, children}) when is_list(children),
+    do: Enum.filter(children, &ast_node?/1)
+
+  defp ast_children({form, _meta, args}) when is_list(args) do
+    [form, args]
+    |> Enum.filter(&ast_node?/1)
+  end
+
+  defp ast_children({left, right}), do: Enum.filter([left, right], &ast_node?/1)
+  defp ast_children(list) when is_list(list), do: Enum.filter(list, &ast_node?/1)
+  defp ast_children(_), do: []
+
   defp semantic_children({:__block__, _meta, children}) when is_list(children), do: children
 
   defp semantic_children({_form, _meta, args}) when is_list(args) do
-    direct_children = Enum.filter(args, &ast_node?/1)
+    children = do_block_children(args) || Enum.filter(args, &ast_node?/1)
 
-    args
-    |> do_block_children()
-    |> case do
-      nil -> direct_children
-      children -> direct_children ++ children
-    end
-    |> Enum.flat_map(fn
+    Enum.flat_map(children, fn
       {:__block__, _meta, [child]} -> [child]
       child -> [child]
     end)
@@ -412,7 +523,7 @@ defmodule ExAST.Patcher do
 
   defp ast_node?({_form, _meta, _args}), do: true
   defp ast_node?({_, _}), do: true
-  defp ast_node?(list) when is_list(list), do: Keyword.keyword?(list)
+  defp ast_node?(list) when is_list(list), do: true
   defp ast_node?(_), do: false
 
   defp find_node_ancestors(nil, _target), do: []

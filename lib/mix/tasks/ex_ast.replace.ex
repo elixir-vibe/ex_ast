@@ -15,8 +15,14 @@ defmodule Mix.Tasks.ExAst.Replace do
     * `--parent 'pattern'` / `--not-parent 'pattern'` — filter by direct semantic parent
     * `--ancestor 'pattern'` / `--not-ancestor 'pattern'` — filter by semantic ancestor
     * `--has-child 'pattern'` / `--not-has-child 'pattern'` — filter by direct semantic child
-    * `--has-descendant 'pattern'` / `--not-has-descendant 'pattern'` — filter by semantic descendant
-    * `--has 'pattern'` / `--not-has 'pattern'` — aliases for descendant filters
+    * `--contains 'pattern'` / `--not-contains 'pattern'` — filter by semantic descendant
+    * `--has-descendant 'pattern'` / `--not-has-descendant 'pattern'` — aliases for contains filters
+    * `--has 'pattern'` / `--not-has 'pattern'` — aliases for contains filters
+    * `--follows 'pattern'` / `--not-follows 'pattern'` — filter by earlier sibling
+    * `--precedes 'pattern'` / `--not-precedes 'pattern'` — filter by later sibling
+    * `--immediately-follows 'pattern'` / `--not-immediately-follows 'pattern'` — filter by previous sibling
+    * `--immediately-precedes 'pattern'` / `--not-immediately-precedes 'pattern'` — filter by next sibling
+    * `--first` / `--not-first`, `--last` / `--not-last`, `--nth n` / `--not-nth n` — filter by sibling position
 
   ## Examples
 
@@ -25,7 +31,8 @@ defmodule Mix.Tasks.ExAst.Replace do
       mix ex_ast.replace --dry-run '%Step{id: "subject"}' 'SharedSteps.subject_step(@opts)'
       mix ex_ast.replace --not-inside 'test _ do _ end' 'IO.inspect(expr)' 'expr'
       mix ex_ast.replace 'IO.inspect(expr)' 'Logger.debug(inspect(expr))' lib/ --parent 'def _ do ... end'
-      mix ex_ast.replace 'Repo.get!(schema, id)' 'Repo.fetch!(schema, id)' lib/ --has 'Repo.transaction(_)' --not-has 'IO.inspect(_)'
+      mix ex_ast.replace 'Repo.get!(schema, id)' 'Repo.fetch!(schema, id)' lib/ --contains 'Repo.transaction(_)' --not-contains 'IO.inspect(...)'
+      mix ex_ast.replace 'Logger.debug(record)' 'Logger.info(record)' lib/ --immediately-precedes 'Repo.delete(record)'
   """
 
   use Mix.Task
