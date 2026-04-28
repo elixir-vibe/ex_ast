@@ -5,7 +5,7 @@ defmodule ExAST.PatternTest do
 
   defp match!(source, pattern) do
     ast = Sourceror.parse_string!(source)
-    Pattern.match(ast, pattern)
+    Pattern.match(ast, pattern, Pattern.collect_aliases(ast))
   end
 
   describe "literals" do
@@ -206,6 +206,56 @@ defmodule ExAST.PatternTest do
                match!("use GenServer", "use mod")
     end
 
+    test "expands aliases for nested remote calls" do
+      assert {:ok, %{}} =
+               match!(
+                 """
+                 defmodule Example do
+                   alias AshPhoenix.Form
+
+                   def run(form) do
+                     Form.for_update(form, :update)
+                   end
+                 end
+                 """,
+                 """
+                 defmodule Example do
+                   alias AshPhoenix.Form
+
+                   def run(form) do
+                     AshPhoenix.Form.for_update(form, :update)
+                   end
+                 end
+                 """
+               )
+    end
+
+    test "expands aliases for selector and inside-style matching" do
+      source = """
+      defmodule Example do
+        alias AshPhoenix.Form
+
+        def run(form) do
+          value =
+            if ready?() do
+              Form.for_update(form, :update)
+            end
+
+          value
+        end
+      end
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "AshPhoenix.Form.for_update(_, _)")
+
+      assert [_] =
+               ExAST.Patcher.find_all(source, "AshPhoenix.Form.for_update(_, _)",
+                 inside: "def _ do ... end"
+               )
+
+      assert [] = ExAST.Patcher.find_all(source, "Form.for_update(_, _)")
+    end
+
     test "import" do
       assert {:ok, caps} = match!("import Ecto.Query", "import mod")
       assert Map.has_key?(caps, :mod)
@@ -214,6 +264,21 @@ defmodule ExAST.PatternTest do
     test "alias" do
       assert {:ok, caps} = match!("alias MyApp.Accounts.User", "alias mod")
       assert Map.has_key?(caps, :mod)
+    end
+
+    test "collects grouped aliases" do
+      ast =
+        Sourceror.parse_string!("""
+        defmodule Example do
+          alias Phoenix.Socket.{Broadcast, Message, Reply}
+        end
+        """)
+
+      assert ExAST.Pattern.collect_aliases(ast) == %{
+               Broadcast: [:Phoenix, :Socket, :Broadcast],
+               Message: [:Phoenix, :Socket, :Message],
+               Reply: [:Phoenix, :Socket, :Reply]
+             }
     end
   end
 

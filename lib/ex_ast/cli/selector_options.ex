@@ -56,7 +56,7 @@ defmodule ExAST.CLI.SelectorOptions do
     Enum.reduce(selector_filters(opts, validate_filter!), selector, fn {predicate, negated?},
                                                                        selector ->
       predicate = if negated?, do: Selector.not(predicate), else: predicate
-      Selector.where(selector, predicate)
+      Selector.where_predicate(selector, predicate)
     end)
   end
 

@@ -1,7 +1,6 @@
 defmodule ExAST.SelectorTest do
   use ExUnit.Case, async: true
 
-  import Kernel, except: [not: 1]
   import ExAST.Selector
 
   alias ExAST.Patcher
@@ -158,6 +157,37 @@ defmodule ExAST.SelectorTest do
       assert match.captures[:name] == {:with_nested_debug, nil, nil}
     end
 
+    test "has_descendant finds nested remote calls inside assigned control flow" do
+      source = """
+      defmodule Form do
+        defp assign_form(%{assigns: %{form: form, tenant: tenant}} = socket) do
+          form =
+            if form do
+              AshPhoenix.Form.for_update(form, :update,
+                as: "form",
+                actor: socket.assigns.current_user,
+                tenant: tenant
+              )
+            else
+              AshPhoenix.Form.for_create(MyApp.Form, :create,
+                as: "form",
+                actor: socket.assigns.current_user,
+                tenant: tenant
+              )
+            end
+
+          assign(socket, form: to_form(form))
+        end
+      end
+      """
+
+      selector =
+        pattern("defp assign_form(%{assigns: %{form: form, tenant: tenant}} = socket) do ... end")
+        |> where(has_descendant("AshPhoenix.Form.for_update(_, _, _)"))
+
+      assert [_match] = Patcher.find_all(source, selector)
+    end
+
     test "has is an alias for has_descendant" do
       source = """
       def run do
@@ -277,6 +307,60 @@ defmodule ExAST.SelectorTest do
       assert match.captures[:socket] == {:socket, nil, nil}
     end
 
+    test "descendant traverses nested remote calls inside assigned control flow" do
+      source = """
+      defmodule Form do
+        defp assign_form(%{assigns: %{form: form, tenant: tenant}} = socket) do
+          form =
+            if form do
+              AshPhoenix.Form.for_update(form, :update,
+                as: "form",
+                actor: socket.assigns.current_user,
+                tenant: tenant
+              )
+            else
+              AshPhoenix.Form.for_create(MyApp.Form, :create,
+                as: "form",
+                actor: socket.assigns.current_user,
+                tenant: tenant
+              )
+            end
+
+          assign(socket, form: to_form(form))
+        end
+      end
+      """
+
+      selector =
+        pattern("defmodule Form do ... end")
+        |> descendant("AshPhoenix.Form.for_update(_, _, _)")
+
+      assert [_match] = Patcher.find_all(source, selector)
+    end
+
+    test "descendant matches alias-expanded remote calls" do
+      source = """
+      defmodule Form do
+        alias AshPhoenix.Form
+
+        defp assign_form(form) do
+          value =
+            if form do
+              Form.for_update(form, :update)
+            end
+
+          value
+        end
+      end
+      """
+
+      selector =
+        pattern("defmodule _ do ... end")
+        |> descendant("AshPhoenix.Form.for_update(_, _)")
+
+      assert [_match] = Patcher.find_all(source, selector)
+    end
+
     test "child relationships can traverse nested modules without matching deeper descendants" do
       source = """
       defmodule Outer do
@@ -394,6 +478,72 @@ defmodule ExAST.SelectorTest do
 
       [match] = Patcher.find_all(source, selector)
       assert match.captures[:name] == {:with_transaction, nil, nil}
+    end
+
+    test "nested not parent predicate excludes direct parent matches" do
+      source = """
+      def run do
+        IO.inspect(:direct)
+
+        if enabled? do
+          IO.inspect(:nested)
+        end
+      end
+      """
+
+      selector =
+        pattern("IO.inspect(value)")
+        |> where(not parent("def run do ... end"))
+        |> where(ancestor("def run do ... end"))
+
+      [match] = Patcher.find_all(source, selector)
+      assert match.captures[:value] == :nested
+    end
+
+    test "nested not ancestor predicate keeps only top-level matches" do
+      source = """
+      def run do
+        IO.inspect(:direct)
+
+        if enabled? do
+          IO.inspect(:nested)
+        end
+      end
+      """
+
+      selector =
+        pattern("IO.inspect(value)")
+        |> where(ancestor("def run do ... end"))
+        |> where(not ancestor("if _ do _ end"))
+
+      [match] = Patcher.find_all(source, selector)
+      assert match.captures[:value] == :direct
+    end
+
+    test "nested not has_child predicate keeps only functions without direct debug" do
+      source = """
+      def with_direct_debug do
+        IO.inspect(:direct)
+      end
+
+      def with_nested_debug do
+        if enabled? do
+          IO.inspect(:nested)
+        end
+      end
+
+      def without_debug do
+        :ok
+      end
+      """
+
+      selector =
+        pattern("def name do ... end")
+        |> where(not has_child("IO.inspect(_)"))
+        |> where(has_descendant("IO.inspect(_)"))
+
+      [match] = Patcher.find_all(source, selector)
+      assert match.captures[:name] == {:with_nested_debug, nil, nil}
     end
   end
 

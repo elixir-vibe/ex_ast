@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Selector negation now works Ecto-style without import hacks** — `where(not ...)`
+  is rewritten by the selector DSL, so users no longer need
+  `import Kernel, except: [not: 1]`.
+- **Selector descendant traversal** now walks nested AST shapes reliably,
+  fixing missed matches for remote calls nested inside assignments and control flow.
+- **Alias-aware matching** expands local `alias` directives so canonical remote-call
+  patterns like `AshPhoenix.Form.for_update(...)` match alias-based call sites like
+  `Form.for_update(...)`.
+- **Grouped alias handling** now supports real-world forms such as
+  `alias Phoenix.Socket.{Broadcast, Message, Reply}`.
+- **Alias collection** no longer misclassifies ordinary variables named `alias`
+  as alias directives.
+
 ## 0.6.0
 
 ### Added

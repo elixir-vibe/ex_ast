@@ -55,10 +55,23 @@ defmodule ExAST.Pattern do
 
   The pattern can be a string or a quoted expression.
   Returns `{:ok, captures}` on match, `:error` otherwise.
+
+  Alias directives found in the surrounding AST can be expanded before matching,
+  so `alias AshPhoenix.Form` followed by `Form.for_update(...)` matches
+  `AshPhoenix.Form.for_update(...)`.
   """
   @spec match(Macro.t(), pattern()) :: {:ok, captures()} | :error
   def match(node, pattern) do
-    do_match(normalize(node), pattern |> to_quoted() |> normalize(), %{})
+    match(node, pattern, %{})
+  end
+
+  @spec match(Macro.t(), pattern(), %{optional(atom()) => [atom()]}) :: {:ok, captures()} | :error
+  def match(node, pattern, alias_env) do
+    do_match(
+      normalize(expand_aliases(node, alias_env)),
+      pattern |> to_quoted() |> normalize(),
+      %{}
+    )
   end
 
   @doc """
@@ -69,7 +82,13 @@ defmodule ExAST.Pattern do
   """
   @spec match_ast(Macro.t(), Macro.t()) :: {:ok, captures()} | :error
   def match_ast(node, pattern_ast) do
-    do_match(normalize(node), normalize(pattern_ast), %{})
+    match_ast(node, pattern_ast, %{})
+  end
+
+  @spec match_ast(Macro.t(), Macro.t(), %{optional(atom()) => [atom()]}) ::
+          {:ok, captures()} | :error
+  def match_ast(node, pattern_ast, alias_env) do
+    do_match(normalize(expand_aliases(node, alias_env)), normalize(pattern_ast), %{})
   end
 
   @doc """
@@ -80,9 +99,17 @@ defmodule ExAST.Pattern do
   """
   @spec match_sequences([Macro.t()], [Macro.t()]) :: [{captures(), Range.t()}]
   def match_sequences(nodes, pattern_asts) when is_list(nodes) and is_list(pattern_asts) do
+    match_sequences(nodes, pattern_asts, %{})
+  end
+
+  @spec match_sequences([Macro.t()], [Macro.t()], %{optional(atom()) => [atom()]}) ::
+          [{captures(), Range.t()}]
+  def match_sequences(nodes, pattern_asts, alias_env)
+      when is_list(nodes) and is_list(pattern_asts) do
     pattern_count = length(pattern_asts)
+    normalized_nodes = Enum.map(nodes, &normalize(expand_aliases(&1, alias_env)))
     normalized_patterns = Enum.map(pattern_asts, &normalize/1)
-    do_match_sequences(nodes, normalized_patterns, pattern_count, 0, [])
+    do_match_sequences(normalized_nodes, normalized_patterns, pattern_count, 0, [])
   end
 
   defp do_match_sequences(nodes, _patterns, pattern_count, _offset, acc)
@@ -153,6 +180,78 @@ defmodule ExAST.Pattern do
     do: Enum.map(list, &normalize/1)
 
   defp normalize(other), do: other
+
+  @doc false
+  def collect_aliases(ast) do
+    {_ast, aliases} =
+      Macro.prewalk(ast, %{}, fn
+        {:alias, _, args} = node, acc when is_list(args) ->
+          {node, collect_alias_directive(args, acc)}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    aliases
+  end
+
+  defp collect_alias_directive([target], acc), do: register_alias_target(acc, target)
+
+  defp collect_alias_directive([target, opts], acc) when is_list(opts) do
+    case Keyword.get(opts, :as) do
+      nil -> register_alias_target(acc, target)
+      as_alias -> put_alias(acc, as_alias, target)
+    end
+  end
+
+  defp collect_alias_directive(args, acc) when is_list(args) do
+    Enum.reduce(args, acc, fn target, aliases ->
+      register_alias_target(aliases, target)
+    end)
+  end
+
+  defp register_alias_target(acc, {:__aliases__, _, _} = target),
+    do: put_alias(acc, target, target)
+
+  defp register_alias_target(acc, {{:., _, [{:__aliases__, _, prefix}, :{}]}, _, suffixes})
+       when is_list(prefix) and is_list(suffixes) do
+    Enum.reduce(suffixes, acc, fn
+      atom, aliases when is_atom(atom) ->
+        put_alias(aliases, {:__aliases__, [], [atom]}, {:__aliases__, [], prefix ++ [atom]})
+
+      {:__aliases__, _, parts}, aliases ->
+        full = {:__aliases__, [], prefix ++ parts}
+        put_alias(aliases, {:__aliases__, [], parts}, full)
+
+      _other, aliases ->
+        aliases
+    end)
+  end
+
+  defp register_alias_target(acc, _target), do: acc
+
+  defp put_alias(acc, {:__aliases__, _, parts}, {:__aliases__, _, target_parts}) do
+    short = List.last(parts)
+    Map.put(acc, short, target_parts)
+  end
+
+  defp put_alias(acc, _alias_ast, _target_ast), do: acc
+
+  defp expand_aliases(ast, alias_env) do
+    Macro.prewalk(ast, fn
+      {:alias, _, _} = node -> node
+      {:defmodule, meta, [name, body]} -> {:defmodule, meta, [name, body]}
+      {:__aliases__, meta, [name]} = node -> expand_alias_node(node, meta, name, alias_env)
+      node -> node
+    end)
+  end
+
+  defp expand_alias_node(node, meta, name, alias_env) do
+    case Map.fetch(alias_env, name) do
+      {:ok, parts} -> {:__aliases__, meta, parts}
+      :error -> node
+    end
+  end
 
   # --- Matching ---
 

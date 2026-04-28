@@ -130,7 +130,6 @@ Use `where/2` with predicates to keep or reject the selected node without
 changing what gets returned:
 
 ```elixir
-import Kernel, except: [not: 1]
 import ExAST.Selector
 
 selector =
@@ -153,9 +152,8 @@ Available relationships and predicates:
 | `has_descendant/2`, `has/2` | Apply a nested descendant predicate |
 | `not/1` | Negate a predicate for `where/2` |
 
-`not/1` intentionally mirrors Ecto-style query predicates. Because it shares a
-name with `Kernel.not/1`, import with `import Kernel, except: [not: 1]` when you
-want to call bare `not(...)`.
+`where/2` accepts predicate expressions and rewrites `not(...)` the way an Ecto-style
+DSL would, so you can use bare `not(...)` directly.
 
 ## Examples
 
@@ -380,6 +378,10 @@ dbg(_)
 - **No function-name wildcards** — `def _(_) do _ end` won't match
   arbitrary function names because `_` in that position parses as a call,
   not a wildcard. Use the actual name or match the `do` block.
+- **Alias expansion is local syntax-aware, not semantic** — `alias AshPhoenix.Form`
+  lets `Form.for_update(...)` match `AshPhoenix.Form.for_update(...)` within the
+  same matched AST, but ExAST does not expand macros or resolve imports the way
+  the compiler does.
 - **Exact list length** — `[a, b]` only matches two-element lists. Use
   `[a, b, ...]` to match two-or-more, or `[...]` for any length.
 - **No multi-expression wildcards in sequences** — `...` matches a

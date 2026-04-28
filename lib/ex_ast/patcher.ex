@@ -111,20 +111,24 @@ defmodule ExAST.Patcher do
   # --- Core find logic ---
 
   defp do_find_all(ast, %Selector{} = selector, opts) do
+    alias_env = Pattern.collect_aliases(ast)
+
     ast
-    |> collect_selector_matches(selector)
-    |> apply_where(opts)
+    |> collect_selector_matches(selector, alias_env)
+    |> apply_where(opts, alias_env)
   end
 
   defp do_find_all(ast, pattern, opts) do
+    alias_env = Pattern.collect_aliases(ast)
+
     matches =
       if Pattern.multi_node?(pattern) do
-        collect_sequence_matches(ast, pattern)
+        collect_sequence_matches(ast, pattern, alias_env)
       else
-        ast |> Zipper.zip() |> collect_matches(pattern, [])
+        ast |> Zipper.zip() |> collect_matches(pattern, alias_env, [])
       end
 
-    apply_where(matches, opts)
+    apply_where(matches, opts, alias_env)
   end
 
   # --- Core replace logic (AST → AST) ---
@@ -157,33 +161,33 @@ defmodule ExAST.Patcher do
 
   # --- Single-node matching ---
 
-  defp collect_matches(nil, _pattern, acc), do: Enum.reverse(acc)
+  defp collect_matches(nil, _pattern, _alias_env, acc), do: Enum.reverse(acc)
 
-  defp collect_matches(zipper, pattern, acc) do
+  defp collect_matches(zipper, pattern, alias_env, acc) do
     node = Zipper.node(zipper)
 
-    case Pattern.match(node, pattern) do
+    case Pattern.match(node, pattern, alias_env) do
       {:ok, captures} ->
         range = safe_range(node)
         ancestors = collect_ancestors(zipper)
         match = %{node: node, range: range, captures: captures, ancestors: ancestors}
-        zipper |> Zipper.skip() |> collect_matches(pattern, [match | acc])
+        zipper |> Zipper.skip() |> collect_matches(pattern, alias_env, [match | acc])
 
       :error ->
-        zipper |> Zipper.next() |> collect_matches(pattern, acc)
+        zipper |> Zipper.next() |> collect_matches(pattern, alias_env, acc)
     end
   end
 
   # --- Multi-node (sequence) matching ---
 
-  defp collect_sequence_matches(ast, pattern) do
+  defp collect_sequence_matches(ast, pattern, alias_env) do
     pattern_asts = Pattern.pattern_nodes(pattern)
 
     {_, matches} =
       Macro.prewalk(ast, [], fn node, acc ->
         case extract_block_children(node) do
           nil -> {node, acc}
-          children -> {node, find_in_block(children, pattern_asts, ast) ++ acc}
+          children -> {node, find_in_block(children, pattern_asts, ast, alias_env) ++ acc}
         end
       end)
 
@@ -209,8 +213,8 @@ defmodule ExAST.Patcher do
 
   defp extract_block_children(_), do: nil
 
-  defp find_in_block(children, pattern_asts, root_ast) do
-    Pattern.match_sequences(children, pattern_asts)
+  defp find_in_block(children, pattern_asts, root_ast, alias_env) do
+    Pattern.match_sequences(children, pattern_asts, alias_env)
     |> Enum.map(fn {captures, range} ->
       matched_nodes = Enum.slice(children, range)
       first = List.first(matched_nodes)
@@ -238,35 +242,39 @@ defmodule ExAST.Patcher do
 
   # --- Selector matching ---
 
-  defp collect_selector_matches(root_ast, %Selector{
-         steps: [{:self, pattern} | steps],
-         filters: filters
-       }) do
+  defp collect_selector_matches(
+         root_ast,
+         %Selector{
+           steps: [{:self, pattern} | steps],
+           filters: filters
+         },
+         alias_env
+       ) do
     root_ast
     |> selector_descendants(include_self: true)
-    |> Enum.flat_map(&selector_match(&1, pattern, root_ast, %{}))
-    |> follow_selector_steps(steps, root_ast)
-    |> apply_selector_filters(filters, root_ast)
+    |> Enum.flat_map(&selector_match(&1, pattern, root_ast, %{}, alias_env))
+    |> follow_selector_steps(steps, root_ast, alias_env)
+    |> apply_selector_filters(filters, root_ast, alias_env)
     |> Enum.map(&selector_result/1)
   end
 
-  defp follow_selector_steps(matches, [], _root_ast), do: matches
+  defp follow_selector_steps(matches, [], _root_ast, _alias_env), do: matches
 
-  defp follow_selector_steps(matches, [{relation, pattern} | steps], root_ast) do
+  defp follow_selector_steps(matches, [{relation, pattern} | steps], root_ast, alias_env) do
     matches
     |> Enum.flat_map(fn %{node: node, captures: captures} ->
       node
       |> selector_candidates(relation)
-      |> Enum.flat_map(&selector_match(&1, pattern, root_ast, captures))
+      |> Enum.flat_map(&selector_match(&1, pattern, root_ast, captures, alias_env))
     end)
-    |> follow_selector_steps(steps, root_ast)
+    |> follow_selector_steps(steps, root_ast, alias_env)
   end
 
   defp selector_candidates(node, :child), do: semantic_children(node)
   defp selector_candidates(node, :descendant), do: selector_descendants(node, include_self: false)
 
-  defp selector_match(node, pattern, root_ast, captures) do
-    case Pattern.match(node, pattern) do
+  defp selector_match(node, pattern, root_ast, captures, alias_env) do
+    case Pattern.match(node, pattern, alias_env) do
       {:ok, new_captures} ->
         case merge_captures(captures, new_captures) do
           {:ok, captures} ->
@@ -288,18 +296,19 @@ defmodule ExAST.Patcher do
     end
   end
 
-  defp apply_selector_filters(matches, filters, root_ast) do
+  defp apply_selector_filters(matches, filters, root_ast, alias_env) do
     Enum.filter(matches, fn match ->
-      Enum.all?(filters, &selector_filter?(match, &1, root_ast))
+      Enum.all?(filters, &selector_filter?(match, &1, root_ast, alias_env))
     end)
   end
 
   defp selector_filter?(
          match,
          %Predicate{relation: relation, pattern: pattern, negated?: negated?},
-         root_ast
+         root_ast,
+         alias_env
        ) do
-    result = selector_filter?(match, relation, pattern, root_ast)
+    result = selector_filter?(match, relation, pattern, root_ast, alias_env)
 
     if negated? do
       not result
@@ -308,35 +317,38 @@ defmodule ExAST.Patcher do
     end
   end
 
-  defp selector_filter?(%{ancestors: [parent | _]}, :parent, pattern, _root_ast),
-    do: Pattern.match(parent, pattern) != :error
+  defp selector_filter?(%{ancestors: [parent | _]}, :parent, pattern, _root_ast, alias_env),
+    do: Pattern.match(parent, pattern, alias_env) != :error
 
-  defp selector_filter?(%{ancestors: []}, :parent, _pattern, _root_ast), do: false
+  defp selector_filter?(%{ancestors: []}, :parent, _pattern, _root_ast, _alias_env), do: false
 
-  defp selector_filter?(%{ancestors: ancestors}, :ancestor, pattern, _root_ast),
-    do: Enum.any?(ancestors, &(Pattern.match(&1, pattern) != :error))
+  defp selector_filter?(%{ancestors: ancestors}, :ancestor, pattern, _root_ast, alias_env),
+    do: Enum.any?(ancestors, &(Pattern.match(&1, pattern, alias_env) != :error))
 
-  defp selector_filter?(%{node: node}, :has_child, pattern, _root_ast),
-    do: Enum.any?(semantic_children(node), &(Pattern.match(&1, pattern) != :error))
+  defp selector_filter?(%{node: node}, :has_child, pattern, _root_ast, alias_env),
+    do: Enum.any?(semantic_children(node), &(Pattern.match(&1, pattern, alias_env) != :error))
 
-  defp selector_filter?(%{node: node}, :has_descendant, pattern, _root_ast),
+  defp selector_filter?(%{node: node}, :has_descendant, pattern, _root_ast, alias_env),
     do:
       node
       |> selector_descendants(include_self: false)
-      |> Enum.any?(&(Pattern.match(&1, pattern) != :error))
+      |> Enum.any?(&(Pattern.match(&1, pattern, alias_env) != :error))
 
   defp selector_result(%{node: node, range: range, captures: captures, ancestors: ancestors}) do
     %{node: node, range: range, captures: captures, ancestors: ancestors}
   end
 
   defp selector_descendants(node, opts) do
-    children = semantic_children(node)
-    descendants = Enum.flat_map(children, &selector_descendants(&1, include_self: true))
+    descendants =
+      node
+      |> Macro.prewalk([], fn child, acc -> {child, [child | acc]} end)
+      |> elem(1)
+      |> Enum.reverse()
 
     if Keyword.fetch!(opts, :include_self) do
-      [node | descendants]
-    else
       descendants
+    else
+      tl(descendants)
     end
   end
 
@@ -370,7 +382,18 @@ defmodule ExAST.Patcher do
   defp semantic_children({:__block__, _meta, children}) when is_list(children), do: children
 
   defp semantic_children({_form, _meta, args}) when is_list(args) do
-    do_block_children(args) || Enum.filter(args, &ast_node?/1)
+    direct_children = Enum.filter(args, &ast_node?/1)
+
+    args
+    |> do_block_children()
+    |> case do
+      nil -> direct_children
+      children -> direct_children ++ children
+    end
+    |> Enum.flat_map(fn
+      {:__block__, _meta, [child]} -> [child]
+      child -> [child]
+    end)
   end
 
   defp semantic_children({left, right}), do: Enum.filter([left, right], &ast_node?/1)
@@ -381,6 +404,8 @@ defmodule ExAST.Patcher do
     Enum.find_value(args, fn
       [{_, {:__block__, _, children}}] when is_list(children) -> children
       [{_, child}] when is_tuple(child) or is_list(child) -> List.wrap(child)
+      {_, {:__block__, _, children}} when is_list(children) -> children
+      {_, child} when is_tuple(child) or is_list(child) -> List.wrap(child)
       _ -> nil
     end)
   end
@@ -409,29 +434,29 @@ defmodule ExAST.Patcher do
     end
   end
 
-  defp apply_where(matches, opts) do
+  defp apply_where(matches, opts, alias_env) do
     inside = Keyword.get(opts, :inside)
     not_inside = Keyword.get(opts, :not_inside)
 
     matches
-    |> maybe_filter_inside(inside)
-    |> maybe_filter_not_inside(not_inside)
+    |> maybe_filter_inside(inside, alias_env)
+    |> maybe_filter_not_inside(not_inside, alias_env)
     |> Enum.map(&Map.delete(&1, :ancestors))
   end
 
-  defp maybe_filter_inside(matches, nil), do: matches
+  defp maybe_filter_inside(matches, nil, _alias_env), do: matches
 
-  defp maybe_filter_inside(matches, pattern) do
+  defp maybe_filter_inside(matches, pattern, alias_env) do
     Enum.filter(matches, fn %{ancestors: ancestors} ->
-      Enum.any?(ancestors, &(Pattern.match(&1, pattern) != :error))
+      Enum.any?(ancestors, &(Pattern.match(&1, pattern, alias_env) != :error))
     end)
   end
 
-  defp maybe_filter_not_inside(matches, nil), do: matches
+  defp maybe_filter_not_inside(matches, nil, _alias_env), do: matches
 
-  defp maybe_filter_not_inside(matches, pattern) do
+  defp maybe_filter_not_inside(matches, pattern, alias_env) do
     Enum.reject(matches, fn %{ancestors: ancestors} ->
-      Enum.any?(ancestors, &(Pattern.match(&1, pattern) != :error))
+      Enum.any?(ancestors, &(Pattern.match(&1, pattern, alias_env) != :error))
     end)
   end
 
