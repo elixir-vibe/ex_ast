@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.1
+
+### Fixed
+
+- CLI commands now handle closed stdout pipes cleanly, so commands like
+  `mix ex_ast.search ... | head` no longer emit EPIPE writer crash messages.
+
 ## 0.8.0
 
 ### Added

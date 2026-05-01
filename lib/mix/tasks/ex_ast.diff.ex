@@ -24,6 +24,8 @@ defmodule Mix.Tasks.ExAst.Diff do
 
   use Mix.Task
 
+  alias ExAST.CLI.Output
+
   @switches [json: :boolean, no_moves: :boolean, no_color: :boolean, summary: :boolean]
 
   @impl Mix.Task
@@ -43,36 +45,37 @@ defmodule Mix.Tasks.ExAst.Diff do
     color? = !opts[:no_color] and IO.ANSI.enabled?()
     result = ExAST.diff_files(left_path, right_path, include_moves: !opts[:no_moves])
 
-    cond do
-      opts[:json] -> print_json(result.edits)
-      opts[:summary] -> print_summary(result.summary)
-      true -> print_diff(left_path, right_path, result, color?)
-    end
+    Output.with_stdout(fn ->
+      cond do
+        opts[:json] -> print_json(result.edits)
+        opts[:summary] -> print_summary(result.summary)
+        true -> print_diff(left_path, right_path, result, color?)
+      end
+    end)
   end
 
-  # credo:disable-for-next-line Credo.Check.Warning.IoInspect
-  defp print_json(edits), do: IO.inspect(edits, pretty: true, limit: :infinity)
+  defp print_json(edits), do: Output.inspect(edits, pretty: true, limit: :infinity)
 
-  defp print_summary([]), do: IO.puts("No syntax-aware changes detected.")
-  defp print_summary(lines), do: Enum.each(lines, &IO.puts/1)
+  defp print_summary([]), do: Output.puts("No syntax-aware changes detected.")
+  defp print_summary(lines), do: Enum.each(lines, &Output.puts/1)
 
   defp print_diff(left_path, right_path, %{edits: []}, color?) do
-    IO.puts(bold("#{left_path} ↔ #{right_path}", color?))
-    IO.puts(faint("No syntax-aware changes detected.", color?))
+    Output.puts(bold("#{left_path} ↔ #{right_path}", color?))
+    Output.puts(faint("No syntax-aware changes detected.", color?))
   end
 
   defp print_diff(left_path, right_path, %{edits: edits}, color?) do
-    IO.puts(bold("#{left_path} ↔ #{right_path}", color?))
-    IO.puts("")
+    Output.puts(bold("#{left_path} ↔ #{right_path}", color?))
+    Output.puts("")
     Enum.each(edits, &print_edit(&1, color?))
-    IO.puts(faint("#{length(edits)} edit(s)", color?))
+    Output.puts(faint("#{length(edits)} edit(s)", color?))
   end
 
   defp print_edit(edit, color?) do
     location = format_location(edit.old_range || edit.new_range)
-    IO.puts("#{faint(location, color?)} #{op_tag(edit.op, color?)} #{edit.summary}")
+    Output.puts("#{faint(location, color?)} #{op_tag(edit.op, color?)} #{edit.summary}")
     print_body(edit, color?)
-    IO.puts("")
+    Output.puts("")
   end
 
   defp print_body(%{op: :update, meta: %{old: old, new: new}}, color?) do
@@ -80,20 +83,20 @@ defmodule Mix.Tasks.ExAst.Diff do
   end
 
   defp print_body(%{op: :delete, meta: %{old: old}}, color?) do
-    old |> String.split("\n") |> Enum.each(&IO.puts(red("  - #{&1}", color?)))
+    old |> String.split("\n") |> Enum.each(&Output.puts(red("  - #{&1}", color?)))
   end
 
   defp print_body(%{op: :insert, meta: %{new: new}}, color?) do
-    new |> String.split("\n") |> Enum.each(&IO.puts(green("  + #{&1}", color?)))
+    new |> String.split("\n") |> Enum.each(&Output.puts(green("  + #{&1}", color?)))
   end
 
   defp print_body(_, _), do: :ok
 
   defp inline_diff(old_lines, new_lines, color?) do
     Enum.each(List.myers_difference(old_lines, new_lines), fn
-      {:eq, lines} -> Enum.each(lines, &IO.puts(faint("    #{&1}", color?)))
-      {:del, lines} -> Enum.each(lines, &IO.puts(red("  - #{&1}", color?)))
-      {:ins, lines} -> Enum.each(lines, &IO.puts(green("  + #{&1}", color?)))
+      {:eq, lines} -> Enum.each(lines, &Output.puts(faint("    #{&1}", color?)))
+      {:del, lines} -> Enum.each(lines, &Output.puts(red("  - #{&1}", color?)))
+      {:ins, lines} -> Enum.each(lines, &Output.puts(green("  + #{&1}", color?)))
     end)
   end
 

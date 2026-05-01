@@ -58,6 +58,7 @@ defmodule Mix.Tasks.ExAst.Search do
 
   use Mix.Task
 
+  alias ExAST.CLI.Output
   alias ExAST.CLI.SelectorOptions
 
   @impl Mix.Task
@@ -95,12 +96,14 @@ defmodule Mix.Tasks.ExAst.Search do
 
     results = ExAST.search(paths, search_pattern, search_opts)
 
-    if opts[:count] do
-      IO.puts(length(results))
-    else
-      Enum.each(results, &print_match/1)
-      IO.puts("\n#{length(results)} match(es)")
-    end
+    Output.with_stdout(fn ->
+      if opts[:count] do
+        Output.puts(length(results))
+      else
+        Enum.each(results, &print_match/1)
+        Output.puts("\n#{length(results)} match(es)")
+      end
+    end)
   end
 
   defp validate_pattern!(pattern) do
@@ -111,10 +114,10 @@ defmodule Mix.Tasks.ExAst.Search do
   end
 
   defp print_match(%{file: file, line: line, source: source, captures: captures}) do
-    IO.puts("#{file}:#{line}")
-    source |> String.split("\n") |> Enum.each(&IO.puts("  #{&1}"))
+    Output.puts("#{file}:#{line}")
+    source |> String.split("\n") |> Enum.each(&Output.puts("  #{&1}"))
     print_captures(captures)
-    IO.puts("")
+    Output.puts("")
   end
 
   defp print_captures(captures) when map_size(captures) == 0, do: :ok
@@ -122,7 +125,7 @@ defmodule Mix.Tasks.ExAst.Search do
   defp print_captures(captures) do
     for {name, value} <- captures do
       rendered = value |> restore_meta() |> Macro.to_string()
-      IO.puts("  #{name}: #{rendered}")
+      Output.puts("  #{name}: #{rendered}")
     end
   end
 

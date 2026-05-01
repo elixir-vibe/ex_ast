@@ -43,6 +43,7 @@ defmodule Mix.Tasks.ExAst.Replace do
 
   use Mix.Task
 
+  alias ExAST.CLI.Output
   alias ExAST.CLI.SelectorOptions
 
   @impl Mix.Task
@@ -73,20 +74,20 @@ defmodule Mix.Tasks.ExAst.Replace do
 
     results = ExAST.replace(paths, replace_pattern, replacement, replace_opts)
 
-    case results do
-      [] ->
-        IO.puts("No matches found.")
+    Output.with_stdout(fn -> print_results(results, opts) end)
+  end
 
-      files ->
-        total = files |> Enum.map(&elem(&1, 1)) |> Enum.sum()
-        verb = if opts[:dry_run], do: "Would update", else: "Updated"
+  defp print_results([], _opts), do: Output.puts("No matches found.")
 
-        for {file, count} <- files do
-          IO.puts("#{verb} #{file} (#{count} replacement(s))")
-        end
+  defp print_results(files, opts) do
+    total = files |> Enum.map(&elem(&1, 1)) |> Enum.sum()
+    verb = if opts[:dry_run], do: "Would update", else: "Updated"
 
-        IO.puts("\n#{total} replacement(s) in #{length(files)} file(s)")
+    for {file, count} <- files do
+      Output.puts("#{verb} #{file} (#{count} replacement(s))")
     end
+
+    Output.puts("\n#{total} replacement(s) in #{length(files)} file(s)")
   end
 
   defp validate_filter_pattern!(code), do: validate_syntax!(code, "filter pattern")
