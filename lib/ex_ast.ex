@@ -39,6 +39,15 @@ defmodule ExAST do
 
       ExAST.search("lib/", query)
 
+      # Capture guards — filter on captured values with ^pin
+      import ExAST.Query
+
+      query =
+        from("Enum.take(_, count)")
+        |> where(match?({:-, _, [_]}, ^count))
+
+      ExAST.search("lib/", query)
+
       # Syntax-aware diff
       result = ExAST.diff(old_source, new_source)
       result.edits  #=> [%ExAST.Diff.Edit{op: :update, kind: :function, ...}]

@@ -209,4 +209,85 @@ defmodule ExAST.QueryTest do
     [match] = Patcher.find_all(source, query)
     assert match.captures[:name] == {:transaction, nil, nil}
   end
+
+  test "capture guards with ^pin filter on captured values" do
+    source = """
+    Enum.take(users, -5)
+    Enum.take(users, 10)
+    Enum.take(users, -1)
+    """
+
+    query =
+      from("Enum.take(_, count)")
+      |> where(match?({:-, _, [_]}, ^count))
+
+    matches = Patcher.find_all(source, query)
+    assert length(matches) == 2
+    assert Enum.all?(matches, fn m -> match?({:-, _, [_]}, m.captures[:count]) end)
+  end
+
+  test "capture guards with ^pin multi-capture expression" do
+    source = """
+    x == x
+    x == y
+    a + a
+    """
+
+    query =
+      from("left == right")
+      |> where(^left == ^right)
+
+    [match] = Patcher.find_all(source, query)
+    assert match.captures[:left] == {:x, nil, nil}
+  end
+
+  test "capture guards with ^pin and match? for structural type check" do
+    source = """
+    Enum.map(users, fn u -> u.name end) |> Enum.filter(fn u -> u.active? end)
+    Enum.filter(users, fn u -> u.active? end)
+    """
+
+    query =
+      from("Enum.filter(expr, _)")
+      |> where(match?({{:., _, [{:__aliases__, _, [:Enum]}, :map]}, _, _}, ^expr))
+
+    [match] = Patcher.find_all(source, query)
+    assert match.captures[:expr] != {:users, nil, nil}
+  end
+
+  test "capture guards with ^pin specific atom value" do
+    source = """
+    def handle_event(:click, _, socket) do
+      {:noreply, socket}
+    end
+    def handle_event(:keydown, _, socket) do
+      {:noreply, socket}
+    end
+    def handle_event(:submit, _, socket) do
+      {:noreply, socket}
+    end
+    """
+
+    query =
+      from("def handle_event(event, _, _) do ... end")
+      |> where(^event == :click or ^event == :keydown)
+
+    matches = Patcher.find_all(source, query)
+    assert length(matches) == 2
+  end
+
+  test "capture guards compose with structural predicates" do
+    source = """
+    Enum.take(users, -5)
+    Enum.take(users, 10)
+    Enum.take(users, 3)
+    """
+
+    query =
+      from("Enum.take(_, count)")
+      |> where(match?({:-, _, [_]}, ^count))
+
+    [match] = Patcher.find_all(source, query)
+    assert match.captures[:count] == {:-, nil, [5]}
+  end
 end

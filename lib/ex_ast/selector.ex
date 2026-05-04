@@ -34,6 +34,7 @@ defmodule ExAST.Selector.Predicate do
           | :first
           | :last
           | :nth
+          | :captures
           | :comment
           | :comment_before
           | :comment_after
@@ -73,6 +74,12 @@ defmodule ExAST.Selector do
 
       pattern("def _ do ... end")
       |> where(not has_descendant("IO.inspect(_)"))
+
+  `where/2` supports capture guards using `^` to pin captured values,
+  allowing runtime checks on matched nodes:
+
+      pattern("Enum.take(_, count)")
+      |> where(match?({:-, _, [_]}, ^count))
   """
 
   alias ExAST.Selector.CommentMatcher
@@ -116,12 +123,46 @@ defmodule ExAST.Selector do
 
   @doc "Adds a predicate filter without changing the selected node."
   defmacro where(selector, expr) do
-    predicate = build_predicate_from_ast(expr)
+    if has_pin?(expr) do
+      guard_body = expand_pins(expr)
 
-    quote do
-      ExAST.Selector.where_predicate(unquote(selector), unquote(Macro.escape(predicate)))
+      quote do
+        ExAST.Selector.where_predicate(
+          unquote(selector),
+          %ExAST.Selector.Predicate{
+            relation: :captures,
+            pattern: fn captures -> unquote(guard_body) end
+          }
+        )
+      end
+    else
+      predicate = build_predicate_from_ast(expr)
+
+      quote do
+        ExAST.Selector.where_predicate(unquote(selector), unquote(Macro.escape(predicate)))
+      end
     end
   end
+
+  defp has_pin?(ast) do
+    Macro.prewalk(ast, false, fn
+      {:^, _, _}, _ -> {nil, true}
+      node, found -> {node, found}
+    end)
+    |> elem(1)
+  end
+
+  defp expand_pins(ast) do
+    ast
+    |> unwrap_ampersand()
+    |> Macro.prewalk(fn
+      {:^, _, [{name, _, _}]} -> quote(do: Map.get(captures, unquote(name)))
+      node -> node
+    end)
+  end
+
+  defp unwrap_ampersand({:&, _, [body]}), do: body
+  defp unwrap_ampersand(ast), do: ast
 
   @doc false
   @spec where_predicate(t(), Predicate.t()) :: t()
@@ -301,9 +342,9 @@ defmodule ExAST.Selector do
 
   defp build_predicate_from_ast(%Predicate{} = predicate), do: predicate
 
-  defp build_predicate_from_ast(ast) do
+  defp build_predicate_from_ast(expr) do
     raise ArgumentError,
-          "unsupported selector predicate expression: #{Macro.to_string(ast)}"
+          "unsupported selector predicate expression: #{Macro.to_string(expr)}"
   end
 
   defp list_ast_to_list(list) when is_list(list), do: list

@@ -291,6 +291,43 @@ defmodule ExAST.PatternTest do
     test "@impl true" do
       assert {:ok, %{}} = match!("@impl true", "@impl true")
     end
+
+    test "captures attribute name" do
+      assert {:ok, caps} =
+               match!("@env Application.get_env(:app, :key)", "@name Application.get_env(_, _)")
+
+      assert caps[:name] == :env
+    end
+
+    test "wildcards in attribute name" do
+      assert {:ok, %{}} =
+               match!("@env Application.get_env(:app, :key)", "@_ Application.get_env(_, _)")
+    end
+
+    test "wildcard-prefixed attribute name" do
+      assert {:ok, %{}} =
+               match!("@env Application.get_env(:app, :key)", "@_name Application.get_env(_, _)")
+    end
+
+    test "literal attribute name match" do
+      assert {:ok, caps} =
+               match!("@env Application.get_env(:app, :key)", "@env Application.get_env(_, _)")
+
+      assert caps[:env] == :env
+    end
+
+    test "captures attribute name with Patcher.find_all" do
+      source = """
+      @env Application.get_env(:my_app, :key)
+      @timeout 5000
+      @db_url Application.get_env(:my_app, :db_url)
+      """
+
+      alias ExAST.Patcher
+      matches = Patcher.find_all(source, "@name Application.get_env(_, _)")
+      assert length(matches) == 2
+      assert Enum.map(matches, & &1.captures[:name]) == [:env, :db_url]
+    end
   end
 
   describe "control flow" do

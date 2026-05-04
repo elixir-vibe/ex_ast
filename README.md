@@ -15,7 +15,7 @@ mix ex_ast.diff lib/old.ex lib/new.ex
 
 ```elixir
 def deps do
-  [{:ex_ast, "~> 0.7", only: [:dev, :test], runtime: false}]
+  [{:ex_ast, "~> 0.9", only: [:dev, :test], runtime: false}]
 end
 ```
 
@@ -203,6 +203,31 @@ from("defmodule _ do ... end")
 `ExAST.Selector` remains available as the lower-level CSS-like API with
 `pattern/1`, `descendant/2`, `child/2`, `ancestor/1`, and `has_descendant/1`.
 
+### Capture guards
+
+Use `^` inside `where/2` to filter on captured values, similar to Ecto's
+pin syntax:
+
+```elixir
+import ExAST.Query
+
+# Only negative literals
+from("Enum.take(_, count)")
+|> where(match?({:-, _, [_]}, ^count))
+
+# Specific atom values
+from("def handle_event(event, _, _) do ... end")
+|> where(^event == :click or ^event == :keydown)
+
+# Multi-capture comparison
+from("left == right")
+|> where(^left == ^right)
+```
+
+Any Elixir expression works inside `where` — `match?/2`, comparisons,
+arithmetic, function calls. The `^name` references are replaced with the
+corresponding captured AST node at match time.
+
 Broad queries like `from("_")` match every AST node. Project-wide searches refuse
 those unless you pass a `limit` or explicitly opt in with `allow_broad: true`:
 
@@ -321,6 +346,10 @@ What it detects:
 ExAST.search("lib/", "IO.inspect(_)")
 #=> [%{file: "lib/worker.ex", line: 12, source: "IO.inspect(data)", captures: %{}}]
 
+# Patcher.find_all now includes matched source text
+ExAST.Patcher.find_all(source_code, "IO.inspect(_)")
+#=> [%{node: ..., range: ..., captures: %{}, source: "IO.inspect(data)"}]
+
 # Search with where conditions
 ExAST.search("lib/", "Repo.get!(_, _)", inside: "defp _ do _ end")
 
@@ -409,9 +438,10 @@ use GenServer
 import Ecto.Query
 alias MyApp.Accounts.User
 
-# Module attributes
-@impl true
+# Module attributes (name is captureable)
+@env Application.get_env(_, _)
 @behaviour mod
+@impl true
 
 # Ecto
 from(_ in _, _)

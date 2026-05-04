@@ -27,7 +27,8 @@ defmodule ExAST.Patcher do
   @type match :: %{
           node: Macro.t(),
           range: Sourceror.Range.t() | nil,
-          captures: Pattern.captures()
+          captures: Pattern.captures(),
+          source: String.t() | nil
         }
 
   @doc """
@@ -35,6 +36,20 @@ defmodule ExAST.Patcher do
 
   The first argument can be a source string, a `Sourceror.Zipper`, or a raw AST.
   The pattern can be a string or a quoted expression.
+
+  Returns a list of match maps with:
+
+    * `:node` — the matched AST node
+    * `:range` — a `Sourceror.Range.t()` with line/column positions, or `nil`
+    * `:captures` — a map of captured names to AST nodes
+    * `:source` — the matched source text, or `nil` for AST/zipper input
+
+  Range fields are accessed as keyword lists:
+
+      match.range.start[:line]   #=> line number (1-based)
+      match.range.start[:column] #=> column number (1-based)
+      match.range.end[:line]
+      match.range.end[:column]
 
   ## Options
 
@@ -50,23 +65,25 @@ defmodule ExAST.Patcher do
   def find_all(source, %Selector{} = selector, opts) when is_binary(source) do
     source
     |> Sourceror.parse_string!()
-    |> do_find_all(selector, opts, source_comments(source))
+    |> do_find_all(selector, opts, source_comments(source), source_lines(source))
   end
 
   def find_all(source, pattern, opts) when is_binary(source) do
-    source |> Sourceror.parse_string!() |> do_find_all(pattern, opts)
+    source
+    |> Sourceror.parse_string!()
+    |> do_find_all(pattern, opts, nil, source_lines(source))
   end
 
   def find_all(%Zipper{} = zipper, %Selector{} = selector, opts) do
-    zipper |> Zipper.topmost_root() |> do_find_all(selector, opts)
+    zipper |> Zipper.topmost_root() |> do_find_all(selector, opts, nil, nil)
   end
 
   def find_all(%Zipper{} = zipper, pattern, opts) do
-    zipper |> Zipper.topmost_root() |> do_find_all(pattern, opts)
+    zipper |> Zipper.topmost_root() |> do_find_all(pattern, opts, nil, nil)
   end
 
   def find_all(ast, pattern, opts) do
-    do_find_all(ast, pattern, opts)
+    do_find_all(ast, pattern, opts, nil, nil)
   end
 
   @doc """
@@ -122,19 +139,23 @@ defmodule ExAST.Patcher do
     _ -> []
   end
 
-  defp do_find_all(ast, pattern, opts, comments \\ nil)
+  defp source_lines(source) do
+    String.split(source, "\n", trim: false)
+  end
 
-  defp do_find_all(ast, %Selector{} = selector, opts, comments) do
+  defp do_find_all(ast, pattern, opts, comments, source_lines)
+
+  defp do_find_all(ast, %Selector{} = selector, opts, comments, source_lines) do
     alias_env = Pattern.collect_aliases(ast)
 
     ast
     |> collect_selector_matches(selector, alias_env)
     |> apply_selector_filters(selector.filters, ast, alias_env, comments)
     |> Enum.map(&selector_result/1)
-    |> apply_where(opts, alias_env)
+    |> apply_where(opts, alias_env, source_lines)
   end
 
-  defp do_find_all(ast, pattern, opts, _comments) do
+  defp do_find_all(ast, pattern, opts, _comments, source_lines) do
     alias_env = Pattern.collect_aliases(ast)
 
     matches =
@@ -144,7 +165,7 @@ defmodule ExAST.Patcher do
         ast |> Zipper.zip() |> collect_matches(pattern, alias_env, [])
       end
 
-    apply_where(matches, opts, alias_env)
+    apply_where(matches, opts, alias_env, source_lines)
   end
 
   # --- Core replace logic (AST → AST) ---
@@ -154,7 +175,7 @@ defmodule ExAST.Patcher do
 
     matched_captures =
       ast
-      |> do_find_all(pattern, opts)
+      |> do_find_all(pattern, opts, nil, nil)
       |> Map.new(&{&1.node, &1.captures})
 
     Macro.prewalk(ast, fn node ->
@@ -413,6 +434,18 @@ defmodule ExAST.Patcher do
 
   defp selector_filter?(match, :nth, index, _root_ast, _alias_env, _comments),
     do: sibling_position(match) == index - 1
+
+  defp selector_filter?(
+         %{captures: captures},
+         :captures,
+         pattern,
+         _root_ast,
+         _alias_env,
+         _comments
+       ) do
+    fun = compile_guard_function(pattern)
+    fun.(captures)
+  end
 
   defp selector_filter?(match, relation, matcher, _root_ast, _alias_env, comments)
        when relation in [
@@ -686,14 +719,62 @@ defmodule ExAST.Patcher do
     end
   end
 
-  defp apply_where(matches, opts, alias_env) do
+  defp apply_where(matches, opts, alias_env, source_lines) do
     inside = Keyword.get(opts, :inside)
     not_inside = Keyword.get(opts, :not_inside)
 
     matches
     |> maybe_filter_inside(inside, alias_env)
     |> maybe_filter_not_inside(not_inside, alias_env)
-    |> Enum.map(&Map.delete(&1, :ancestors))
+    |> Enum.map(fn match ->
+      match
+      |> Map.delete(:ancestors)
+      |> put_source(source_lines)
+    end)
+  end
+
+  defp put_source(match, nil), do: Map.put(match, :source, nil)
+
+  defp put_source(match, lines) do
+    Map.put(match, :source, extract_fragment(lines, match.range))
+  end
+
+  defp extract_fragment(_lines, nil), do: nil
+
+  defp extract_fragment(lines, %{start: start, end: end_})
+       when is_list(start) and is_list(end_) do
+    with start_line when is_integer(start_line) <- start[:line],
+         start_column when is_integer(start_column) <- start[:column],
+         end_line when is_integer(end_line) <- end_[:line],
+         end_column when is_integer(end_column) <- end_[:column] do
+      slice_lines(lines, start_line, start_column, end_line, end_column)
+    else
+      _ -> nil
+    end
+  end
+
+  defp extract_fragment(_lines, _range), do: nil
+
+  defp slice_lines(lines, line, start_column, line, end_column) do
+    lines
+    |> Enum.at(line - 1, "")
+    |> String.slice((start_column - 1)..(end_column - 2)//1)
+  end
+
+  defp slice_lines(lines, start_line, start_column, end_line, end_column) do
+    lines
+    |> Enum.slice((start_line - 1)..(end_line - 1)//1)
+    |> slice_first_last(start_column, end_column)
+    |> Enum.join("\n")
+  end
+
+  defp slice_first_last([], _start_column, _end_column), do: []
+
+  defp slice_first_last([first | rest], start_column, end_column) do
+    {middle, [last]} = Enum.split(rest, max(length(rest) - 1, 0))
+
+    [String.slice(first, (start_column - 1)..-1//1)] ++
+      middle ++ [String.slice(last, 0..(end_column - 2)//1)]
   end
 
   defp maybe_filter_inside(matches, nil, _alias_env), do: matches
@@ -745,4 +826,7 @@ defmodule ExAST.Patcher do
   rescue
     _ -> nil
   end
+
+  defp compile_guard_function({:fn, _, _} = ast), do: Code.eval_quoted(ast) |> elem(0)
+  defp compile_guard_function(fun) when is_function(fun, 1), do: fun
 end

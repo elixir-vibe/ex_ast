@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+
+- **Capture guards** — `where/2` now accepts `^pin` syntax to filter on captured
+  values, similar to Ecto's parameter references:
+  ```elixir
+  from("Enum.take(_, count)")
+  |> where(match?({:-, _, [_]}, ^count))
+  ```
+  Supports `match?/2` for structural checks, plain comparisons
+  (`^event == :click`), multi-capture expressions (`^left == ^right`),
+  and composition with existing structural predicates.
+
+- **Source text in match results** — `Patcher.find_all/3` now includes a
+  `:source` field with the matched source snippet. `nil` for AST/zipper input.
+
+- **Module attribute pattern matching** — attribute names are now captureable:
+  ```elixir
+  Patcher.find_all(source, "@name Application.get_env(_, _)")
+  ```
+  Previously `@env Application.get_env(...)` would not match a pattern with
+  a different attribute name, even as a capture variable.
+
 ## 0.8.1
 
 ### Fixed

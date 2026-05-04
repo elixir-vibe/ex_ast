@@ -63,6 +63,38 @@ defmodule ExAST.PatcherTest do
       [match] = Patcher.find_all(source, "IO.inspect(_)")
       assert match.range.start[:line] == 2
     end
+
+    test "includes source text in match result for source string input" do
+      source = """
+      IO.inspect(value)
+      Enum.map(list, fn x -> x end)
+      IO.inspect(other)
+      """
+
+      matches = Patcher.find_all(source, "IO.inspect(name)")
+      assert length(matches) == 2
+
+      assert [%{source: "IO.inspect(value)"}, %{source: "IO.inspect(other)"}] = matches
+    end
+
+    test "returns nil source for AST input" do
+      ast = quote do: IO.inspect(:hello)
+      [match] = Patcher.find_all(ast, "IO.inspect(_)")
+      assert match.source == nil
+    end
+
+    test "source text for multi-line match" do
+      source = """
+      def run do
+        :ok
+      end
+      """
+
+      [match] = Patcher.find_all(source, "def name do ... end")
+      assert match.source =~ "def run do"
+      assert match.source =~ ":ok"
+      assert match.source =~ "end"
+    end
   end
 
   describe "replace_all/3" do

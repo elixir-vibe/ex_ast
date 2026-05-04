@@ -13,6 +13,15 @@ defmodule ExAST.Query do
       |> where(contains("Repo.transaction(_)"))
       |> where(not contains("IO.inspect(_)"))
 
+  `where/2` also supports capture guards using `^` to pin captured values,
+  similar to Ecto's parameter syntax:
+
+      from("Enum.take(_, count)")
+      |> where(match?({:-, _, [_]}, ^count))
+
+      from("left == right")
+      |> where(^left == ^right)
+
   The resulting query can be passed to `ExAST.search/3` or
   `ExAST.Patcher.find_all/3` anywhere a selector is accepted.
   """
@@ -24,13 +33,66 @@ defmodule ExAST.Query do
   @doc "Starts a query from one pattern or a list of alternative patterns."
   defdelegate from(pattern), to: Selector
 
-  @doc "Adds a predicate filter without changing the selected node."
+  @doc """
+  Adds a predicate filter without changing the selected node.
+
+  Accepts structural predicates (`contains/1`, `inside/1`, etc.),
+  boolean expressions (`not`, `and`, `or`), and capture guards.
+
+  ## Capture guards
+
+  Use `^name` to reference a captured value from the pattern. The expression
+  is evaluated against the captures map at match time:
+
+      from("Enum.take(_, count)")
+      |> where(match?({:-, _, [_]}, ^count))
+
+      from("def handle_event(event, _, _) do ... end")
+      |> where(^event == :click or ^event == :keydown)
+
+      from("left == right")
+      |> where(^left == ^right)
+  """
   defmacro where(query, expr) do
-    quote do
-      require ExAST.Selector
-      ExAST.Selector.where(unquote(query), unquote(expr))
+    if has_pin?(expr) do
+      guard_body = expand_pins(expr)
+
+      quote do
+        ExAST.Selector.where_predicate(
+          unquote(query),
+          %ExAST.Selector.Predicate{
+            relation: :captures,
+            pattern: fn captures -> unquote(guard_body) end
+          }
+        )
+      end
+    else
+      quote do
+        require ExAST.Selector
+        ExAST.Selector.where(unquote(query), unquote(expr))
+      end
     end
   end
+
+  defp has_pin?(ast) do
+    Macro.prewalk(ast, false, fn
+      {:^, _, _}, _ -> {nil, true}
+      node, found -> {node, found}
+    end)
+    |> elem(1)
+  end
+
+  defp expand_pins(ast) do
+    ast
+    |> unwrap_ampersand()
+    |> Macro.prewalk(fn
+      {:^, _, [{name, _, _}]} -> quote(do: Map.get(captures, unquote(name)))
+      node -> node
+    end)
+  end
+
+  defp unwrap_ampersand({:&, _, [body]}), do: body
+  defp unwrap_ampersand(ast), do: ast
 
   @doc "Finds matching descendants of the current selection."
   defdelegate find(query, pattern), to: Selector

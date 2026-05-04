@@ -296,6 +296,17 @@ defmodule ExAST.Pattern do
     end
   end
 
+  # Module attribute: @name(expr) — attribute name is captureable
+  defp do_match(
+         {:@, nil, [{sname, nil, sargs}]},
+         {:@, nil, [{pname, nil, pargs}]},
+         caps
+       ) do
+    with {:ok, caps} <- match_attr_name(sname, pname, caps) do
+      do_match(sargs, pargs, caps)
+    end
+  end
+
   # 3-tuple with same atom head (operators, special forms)
   defp do_match({head, nil, schild}, {head, nil, pchild}, caps) when is_atom(head) do
     do_match(schild, pchild, caps)
@@ -387,6 +398,18 @@ defmodule ExAST.Pattern do
       :error -> {:ok, Map.put(captures, name, node)}
     end
   end
+
+  defp match_attr_name(_name, {:_, nil, nil}, caps), do: {:ok, caps}
+
+  defp match_attr_name(name, pname, caps) when is_atom(pname) do
+    case Atom.to_string(pname) |> String.first() do
+      "_" -> {:ok, caps}
+      _ -> bind(pname, name, caps)
+    end
+  end
+
+  defp match_attr_name(name, name, caps), do: {:ok, caps}
+  defp match_attr_name(_, _, _), do: :error
 
   # --- Subset matching for structs/maps ---
 
