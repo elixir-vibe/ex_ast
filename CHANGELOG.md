@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.1
+
+### Changed
+
+- Restructured documentation: short README with topic-based guides
+  (Getting Started, Pattern Language, Querying, CLI Reference, Diff)
+
 ## 0.9.0
 
 ### Added
