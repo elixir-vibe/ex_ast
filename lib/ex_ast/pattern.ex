@@ -473,7 +473,17 @@ defmodule ExAST.Pattern do
     do_match(schild, pchild, caps)
   end
 
-  # 3-tuple with different heads
+  # 3-tuple where pattern head is a wildcard (_) or _-prefixed variable
+  defp do_match({shead, nil, schild}, {phead, nil, pchild}, caps)
+       when is_atom(shead) and is_atom(phead) and shead != phead do
+    case Atom.to_string(phead) do
+      "_" -> do_match(schild, pchild, caps)
+      "_" <> _ -> do_match(schild, pchild, caps)
+      _ -> :error
+    end
+  end
+
+  # 3-tuple with different heads (non-atom)
   defp do_match({shead, nil, schild}, {phead, nil, pchild}, caps) do
     with {:ok, caps} <- do_match(shead, phead, caps) do
       do_match(schild, pchild, caps)

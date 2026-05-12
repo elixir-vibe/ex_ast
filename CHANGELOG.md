@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.2
+
+### Fixed
+
+- Wildcard `_` and `_name` now match function names in `def`/`defp` patterns
+  with arguments. Previously `defp _(_), do: _` would not match
+  `defp helper(x), do: x + 1` because the wildcard in head position couldn't
+  match the atom `:helper` when arguments were present.
+
 ## 0.11.1
 
 ### Added

@@ -163,6 +163,22 @@ defmodule ExAST.PatternTest do
                  "def handle_call(:ping, _, _)"
                )
     end
+
+    test "wildcard _ matches any function name with args" do
+      assert {:ok, %{}} = match!("defp helper(x), do: x + 1", "defp _(_), do: _")
+    end
+
+    test "underscore-prefixed name matches any function name with args" do
+      assert {:ok, %{}} = match!("def run(x), do: x", "def _name(_), do: _")
+    end
+
+    test "wildcard with ellipsis matches any arity" do
+      assert {:ok, %{}} = match!("defp other(a, b), do: a + b", "defp _(...) do ... end")
+    end
+
+    test "non-wildcard name does not match different function" do
+      assert :error = match!("defp helper(x), do: x + 1", "defp other(_), do: _")
+    end
   end
 
   describe "pipes" do
