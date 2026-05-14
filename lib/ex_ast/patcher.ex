@@ -269,7 +269,7 @@ defmodule ExAST.Patcher do
     case Map.fetch(matched_captures, node) do
       {:ok, captures} ->
         captures
-        |> strip_sourceror_meta()
+        |> ExAST.AST.strip_sourceror_meta()
         |> then(&Pattern.substitute(replacement_ast, &1))
         |> restore_meta()
 
@@ -362,8 +362,14 @@ defmodule ExAST.Patcher do
     end)
   end
 
-  defp match_many_pattern({id, name, pattern, _signature}, node, context, blocked, matches) do
-    case Pattern.match_normalized(context.normalized_node, pattern) do
+  defp match_many_pattern(
+         {id, name, %ExAST.CompiledPattern{ast: ast}, _signature},
+         node,
+         context,
+         blocked,
+         matches
+       ) do
+    case Pattern.match_normalized(context.normalized_node, ast) do
       {:ok, captures} ->
         match = %{
           pattern: name,
@@ -405,14 +411,11 @@ defmodule ExAST.Patcher do
     |> Enum.uniq_by(& &1.range)
   end
 
-  defp extract_block_children({:__block__, _meta, children})
-       when is_list(children) and length(children) > 1 do
-    children
-  end
+  defp extract_block_children({:__block__, _meta, [_, _ | _] = children}), do: children
 
   defp extract_block_children({_form, _meta, args}) when is_list(args) do
     Enum.find_value(args, fn
-      [{_, {:__block__, _, children}}] when is_list(children) and length(children) > 1 ->
+      [{_, {:__block__, _, [_, _ | _] = children}}] ->
         children
 
       _ ->
@@ -998,24 +1001,6 @@ defmodule ExAST.Patcher do
       other -> other
     end)
   end
-
-  defp strip_sourceror_meta(captures) do
-    Map.new(captures, fn {key, value} -> {key, do_strip_sourceror_meta(value)} end)
-  end
-
-  defp do_strip_sourceror_meta({form, _meta, args}) when is_atom(form),
-    do: {form, [], do_strip_sourceror_meta(args)}
-
-  defp do_strip_sourceror_meta({form, _meta, args}),
-    do: {do_strip_sourceror_meta(form), [], do_strip_sourceror_meta(args)}
-
-  defp do_strip_sourceror_meta({left, right}),
-    do: {do_strip_sourceror_meta(left), do_strip_sourceror_meta(right)}
-
-  defp do_strip_sourceror_meta(list) when is_list(list),
-    do: Enum.map(list, &do_strip_sourceror_meta/1)
-
-  defp do_strip_sourceror_meta(other), do: other
 
   defp safe_range(node) do
     Sourceror.get_range(node)

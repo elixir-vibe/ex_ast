@@ -83,6 +83,33 @@ ExAST.Patcher.find_all(source, "a = Repo.get!(_, _); Repo.delete(a)")
 #=> matches lines 1 and 3 — captures are consistent across statements
 ```
 
+## Imports and aliases
+
+Alias expansion is syntax-aware, so canonical remote-call patterns match aliased
+call sites:
+
+```elixir
+source = """
+alias AshPhoenix.Form
+Form.for_update(form, :update)
+"""
+
+ExAST.Patcher.find_all(source, "AshPhoenix.Form.for_update(_, _)")
+#=> matches the aliased call
+```
+
+Imported calls can also match their canonical module when the import is explicit:
+
+```elixir
+source = """
+import Ecto.Query, only: [from: 2]
+from(u in User, where: u.id == 1)
+"""
+
+ExAST.Patcher.find_all(source, "Ecto.Query.from(_, _)")
+#=> matches the imported call
+```
+
 ## Module attributes
 
 Attribute names are captureable — the `@name` inside `@name(expr)` matches like a variable, not a literal:

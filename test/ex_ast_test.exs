@@ -104,5 +104,43 @@ defmodule ExASTTest do
       File.write!(Path.join(dir, "a.ex"), "IO.puts(:ok)\n")
       assert [] = ExAST.replace(dir, "IO.inspect(_)", "dbg(_)")
     end
+
+    @tag :tmp_dir
+    test "can format modified files", %{tmp_dir: dir} do
+      path = Path.join(dir, "a.ex")
+      File.write!(path, "def run do\n  dbg(  user  )\nend\n")
+
+      [{^path, 1}] = ExAST.replace(path, "dbg(expr)", "expr", format: true)
+
+      assert File.read!(path) == "def run do\n  user\nend"
+    end
+  end
+
+  describe "rewrite plans" do
+    test "expose replacements without applying them" do
+      source = "def run do\n  dbg(user)\nend\n"
+
+      plan = ExAST.rewrite_plan(source, "dbg(expr)", "expr")
+
+      assert [%ExAST.Rewriter.Replacement{replacement: "user"}] = plan.replacements
+      assert plan.conflicts == []
+      assert ExAST.Rewriter.apply(source, plan) == "def run do\n  user\nend\n"
+    end
+  end
+
+  describe "compiled patterns" do
+    test "carry reusable metadata" do
+      compiled = ExAST.Pattern.compile("IO.inspect(expr)")
+
+      assert %ExAST.CompiledPattern{multi_node?: false, broad?: false} = compiled
+      assert MapSet.member?(compiled.terms, "call.remote:IO.inspect/1")
+    end
+
+    test "compile_ast/1 returns the normalized AST for compatibility" do
+      compiled = ExAST.Pattern.compile("data |> Enum.map(fun)")
+
+      assert ExAST.Pattern.compile_ast(compiled) ==
+               ExAST.Pattern.compile_ast("Enum.map(data, fun)")
+    end
   end
 end

@@ -21,3 +21,7 @@ ex_ast-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Nested tool Mix projects.
+/tools/*/_build/
+/tools/*/deps/

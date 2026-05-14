@@ -58,6 +58,7 @@ defmodule Mix.Tasks.ExAst.Search do
 
   use Mix.Task
 
+  alias ExAST.CLI.JSON
   alias ExAST.CLI.Output
   alias ExAST.CLI.SelectorOptions
 
@@ -66,7 +67,14 @@ defmodule Mix.Tasks.ExAst.Search do
     {opts, positional, _} =
       OptionParser.parse(args,
         strict:
-          [count: :boolean, limit: :integer, allow_broad: :boolean] ++ SelectorOptions.switches()
+          [
+            count: :boolean,
+            limit: :integer,
+            allow_broad: :boolean,
+            format: :string,
+            json: :boolean
+          ] ++
+            SelectorOptions.switches()
       )
 
     case positional do
@@ -91,17 +99,22 @@ defmodule Mix.Tasks.ExAst.Search do
 
     search_opts =
       opts
-      |> SelectorOptions.where_opts([:count, :limit, :allow_broad])
+      |> SelectorOptions.where_opts([:count, :limit, :allow_broad, :format, :json])
       |> Keyword.merge(Keyword.take(opts, [:limit, :allow_broad]))
 
     results = ExAST.search(paths, search_pattern, search_opts)
 
     Output.with_stdout(fn ->
-      if opts[:count] do
-        Output.puts(length(results))
-      else
-        Enum.each(results, &print_match/1)
-        Output.puts("\n#{length(results)} match(es)")
+      cond do
+        json?(opts) ->
+          JSON.print(%{matches: results, count: length(results)})
+
+        opts[:count] ->
+          Output.puts(length(results))
+
+        true ->
+          Enum.each(results, &print_match/1)
+          Output.puts("\n#{length(results)} match(es)")
       end
     end)
   end
@@ -112,6 +125,8 @@ defmodule Mix.Tasks.ExAst.Search do
     e in [SyntaxError, TokenMissingError, MismatchedDelimiterError] ->
       Mix.raise("Invalid pattern: #{Exception.message(e)}")
   end
+
+  defp json?(opts), do: opts[:json] || opts[:format] == "json"
 
   defp print_match(%{file: file, line: line, source: source, captures: captures}) do
     Output.puts("#{file}:#{line}")

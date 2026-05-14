@@ -31,10 +31,12 @@ defmodule ExAST.MixProject do
   defp deps do
     [
       {:sourceror, "~> 1.7"},
+      {:jason, "~> 1.4"},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:ex_dna, "~> 1.3", only: [:dev, :test], runtime: false}
+      {:ex_slop, "~> 0.4.1", only: [:dev, :test], runtime: false},
+      {:ex_dna, "~> 1.5", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -76,10 +78,20 @@ defmodule ExAST.MixProject do
         "compile --warnings-as-errors",
         "format --check-formatted",
         "credo --strict",
+        "cmd mix credo --strict --checks-with-tag ex_slop",
+        "reach_static",
         "dialyzer",
         "test",
         "ex_dna"
-      ]
+      ],
+      reach_static: [
+        "cmd --cd tools/reach_runner mix deps.get",
+        "cmd --cd tools/reach_runner mix reach.check --smells ../../lib",
+        "cmd --cd tools/reach_runner mix reach.check --smells ../../test",
+        "cmd --cd tools/reach_runner mix reach.check --dead-code ../../lib",
+        "cmd --cd tools/reach_runner mix reach.check --dead-code ../../test"
+      ],
+      reach_smells: ["reach_static"]
     ]
   end
 end

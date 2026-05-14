@@ -6,6 +6,7 @@ defmodule Mix.Tasks.ExAstCliTest do
   setup do
     Mix.Task.reenable("ex_ast.search")
     Mix.Task.reenable("ex_ast.replace")
+    Mix.Task.reenable("ex_ast.diff")
     :ok
   end
 
@@ -225,6 +226,20 @@ defmodule Mix.Tasks.ExAstCliTest do
 
       assert output =~ "1 match(es)"
     end
+
+    @tag :tmp_dir
+    test "prints JSON with Jason", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "IO.inspect(value)\n")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["IO.inspect(expr)", file, "--format", "json"])
+        end)
+
+      assert %{"count" => 1, "matches" => [%{"captures" => %{"expr" => "value"}}]} =
+               Jason.decode!(output)
+    end
   end
 
   describe "mix ex_ast.replace selector flags" do
@@ -257,6 +272,26 @@ defmodule Mix.Tasks.ExAstCliTest do
       content = File.read!(file)
       assert content =~ "dbg(:direct)"
       assert content =~ "IO.inspect(:nested)"
+    end
+
+    @tag :tmp_dir
+    test "prints JSON summaries", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "IO.inspect(value)\n")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.replace", [
+            "IO.inspect(expr)",
+            "dbg(expr)",
+            file,
+            "--dry-run",
+            "--format",
+            "json"
+          ])
+        end)
+
+      assert %{"dry_run" => true, "replacements" => 1} = Jason.decode!(output)
     end
 
     @tag :tmp_dir

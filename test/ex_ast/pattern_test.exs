@@ -277,6 +277,16 @@ defmodule ExAST.PatternTest do
       assert Map.has_key?(caps, :mod)
     end
 
+    test "import-aware remote call matching" do
+      source = """
+      import Ecto.Query, only: [from: 2]
+
+      from(u in User, where: u.id == 1)
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "Ecto.Query.from(_, _)")
+    end
+
     test "alias" do
       assert {:ok, caps} = match!("alias MyApp.Accounts.User", "alias mod")
       assert Map.has_key?(caps, :mod)

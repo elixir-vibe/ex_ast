@@ -35,6 +35,10 @@ ExAST.Patcher.find_many(source,
   dbg_call: "dbg(expr)"
 )
 
+# Preview rewrites before applying patches
+ExAST.rewrite_plan(source, "dbg(expr)", "expr")
+#=> %ExAST.Rewriter.Plan{replacements: [...], conflicts: []}
+
 # Specific atom values
 import ExAST.Query
 from("def handle_event(event, _, _) do ... end")
@@ -114,6 +118,7 @@ ExAST.Index.plan(selector)
 ExAST.Symbols.definitions(source)
 ExAST.Symbols.references(source)
 ExAST.Comments.extract(source)
+ExAST.Comments.associated(source, range, :before)
 
 ExAST.Symbols.qualified_name({Enum, :map, 2})
 #=> "Enum.map/2"
@@ -127,10 +132,9 @@ Use these terms and facts to retrieve candidates, then verify with
 
 ## Limitations
 
-- No function-name wildcards — `def _(_)` won't match arbitrary names
-- Alias expansion is syntax-aware, not semantic — no macro expansion
+- Alias/import expansion is syntax-aware, not full semantic macro expansion
 - Multi-node patterns require contiguous statements
-- Replacement formatting uses `Macro.to_string/1` — run `mix format` after
+- Replacement formatting uses `Macro.to_string/1`; pass `format: true` or run `mix format` after
 
 ## License
 

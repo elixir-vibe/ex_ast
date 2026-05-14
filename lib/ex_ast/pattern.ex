@@ -1,4 +1,7 @@
 defmodule ExAST.Pattern do
+  alias ExAST.CompiledPattern
+  alias ExAST.Index.Terms
+
   @moduledoc """
   AST pattern matching with captures.
 
@@ -33,10 +36,7 @@ defmodule ExAST.Pattern do
   """
   @spec multi_node?(pattern()) :: boolean()
   def multi_node?(pattern) do
-    case to_quoted(pattern) do
-      {:__block__, _, [_ | _] = children} when length(children) > 1 -> true
-      _ -> false
-    end
+    match?({:__block__, _, [_, _ | _]}, to_quoted(pattern))
   end
 
   @doc """
@@ -71,14 +71,36 @@ defmodule ExAST.Pattern do
   end
 
   @doc false
-  @spec compile(pattern()) :: Macro.t()
+  @spec compile(pattern()) :: ExAST.CompiledPattern.t()
+  def compile(%CompiledPattern{} = compiled), do: compiled
+
   def compile(pattern) do
-    pattern |> to_quoted() |> normalize()
+    ast = compile_ast(pattern)
+
+    CompiledPattern.new(
+      ast: ast,
+      original: pattern,
+      signature: candidate_signature(ast),
+      terms: Terms.from_pattern(pattern),
+      multi_node?: multi_node?(pattern),
+      broad?: broad?(ast)
+    )
   end
 
   @doc false
-  @spec match_compiled(Macro.t(), Macro.t(), %{optional(atom()) => [atom()]}) ::
+  @spec compile_ast(pattern()) :: Macro.t()
+  def compile_ast(%CompiledPattern{ast: ast}), do: ast
+  def compile_ast(pattern), do: pattern |> to_quoted() |> normalize()
+
+  @doc false
+  @spec match_compiled(Macro.t(), ExAST.CompiledPattern.t() | Macro.t(), %{
+          optional(atom()) => [atom()]
+        }) ::
           {:ok, captures()} | :error
+  def match_compiled(node, %CompiledPattern{ast: ast}, alias_env) do
+    match_compiled(node, ast, alias_env)
+  end
+
   def match_compiled(node, compiled_pattern, alias_env) do
     node
     |> normalize_node(alias_env)
@@ -98,11 +120,15 @@ defmodule ExAST.Pattern do
   end
 
   @doc false
-  @spec candidate_signature(Macro.t()) :: term()
+  @spec candidate_signature(ExAST.CompiledPattern.t() | Macro.t()) :: term()
+  def candidate_signature(%CompiledPattern{signature: signature}), do: signature
   def candidate_signature(compiled_pattern), do: signature(compiled_pattern)
 
   @doc false
-  @spec candidate?(Macro.t(), Macro.t() | term()) :: boolean()
+  @spec candidate?(Macro.t(), ExAST.CompiledPattern.t() | Macro.t() | term()) :: boolean()
+  def candidate?(node, %CompiledPattern{signature: signature}),
+    do: candidate?(node, signature)
+
   def candidate?(node, {:call, name, arities}), do: call_candidate?(node, name, arities)
 
   def candidate?(node, {:contains_call, name, arities}),
@@ -191,35 +217,38 @@ defmodule ExAST.Pattern do
 
   # --- Pattern coercion ---
 
+  defp to_quoted(%CompiledPattern{ast: ast}), do: ast
   defp to_quoted(pattern) when is_binary(pattern), do: Code.string_to_quoted!(pattern)
   defp to_quoted(pattern), do: pattern
 
   # --- Normalization ---
 
-  defp normalize({:__block__, _meta, [inner]}), do: normalize(inner)
+  @doc false
+  @spec normalize(Macro.t()) :: Macro.t()
+  def normalize({:__block__, _meta, [inner]}), do: normalize(inner)
 
-  defp normalize({:|>, _meta, [left, {form, meta2, args}]}) when is_list(args),
+  def normalize({:|>, _meta, [left, {form, meta2, args}]}) when is_list(args),
     do: normalize({form, meta2, [left | args]})
 
-  defp normalize({:|>, _meta, [left, {form, meta2, nil}]}),
+  def normalize({:|>, _meta, [left, {form, meta2, nil}]}),
     do: normalize({form, meta2, [left]})
 
-  defp normalize({form, _meta, context}) when is_atom(form) and is_atom(context),
+  def normalize({form, _meta, context}) when is_atom(form) and is_atom(context),
     do: {form, nil, nil}
 
-  defp normalize({form, _meta, args}) when is_atom(form),
+  def normalize({form, _meta, args}) when is_atom(form),
     do: {form, nil, normalize(args)}
 
-  defp normalize({form, _meta, args}),
+  def normalize({form, _meta, args}),
     do: {normalize(form), nil, normalize(args)}
 
-  defp normalize({left, right}),
+  def normalize({left, right}),
     do: {normalize(left), normalize(right)}
 
-  defp normalize(list) when is_list(list),
+  def normalize(list) when is_list(list),
     do: Enum.map(list, &normalize/1)
 
-  defp normalize(other), do: other
+  def normalize(other), do: other
 
   defp normalize({:__block__, _meta, [inner]}, alias_env), do: normalize(inner, alias_env)
 
@@ -236,6 +265,17 @@ defmodule ExAST.Pattern do
 
   defp normalize({form, _meta, context}, _alias_env) when is_atom(form) and is_atom(context),
     do: {form, nil, nil}
+
+  defp normalize({form, _meta, args}, alias_env) when is_atom(form) and is_list(args) do
+    if import_expandable_call?(form) do
+      case imported_module(alias_env, form, length(args)) do
+        nil -> {form, nil, normalize(args, alias_env)}
+        parts -> {{:., nil, [{:__aliases__, nil, parts}, form]}, nil, normalize(args, alias_env)}
+      end
+    else
+      {form, nil, normalize(args, alias_env)}
+    end
+  end
 
   defp normalize({form, _meta, args}, alias_env) when is_atom(form),
     do: {form, nil, normalize(args, alias_env)}
@@ -258,11 +298,71 @@ defmodule ExAST.Pattern do
         {:alias, _, args} = node, acc when is_list(args) ->
           {node, collect_alias_directive(args, acc)}
 
+        {:import, _, args} = node, acc when is_list(args) ->
+          {node, collect_import_directive(args, acc)}
+
         node, acc ->
           {node, acc}
       end)
 
     aliases
+  end
+
+  defp collect_import_directive([{:__aliases__, _, parts}], acc) when is_list(parts) do
+    put_import(acc, parts, :all)
+  end
+
+  defp collect_import_directive([{:__aliases__, _, parts}, opts], acc) when is_list(parts) do
+    put_import(acc, parts, import_only(opts))
+  end
+
+  defp collect_import_directive(_args, acc), do: acc
+
+  defp import_only(opts) do
+    case Keyword.get(opts, :only) do
+      only when is_list(only) -> only
+      _ -> :all
+    end
+  end
+
+  defp put_import(acc, parts, only) do
+    imports = Map.get(acc, {__MODULE__, :imports}, [])
+    Map.put(acc, {__MODULE__, :imports}, [{parts, only} | imports])
+  end
+
+  defp imported_module(alias_env, name, arity) do
+    alias_env
+    |> Map.get({__MODULE__, :imports}, [])
+    |> Enum.find_value(fn {parts, only} ->
+      if import_matches?(only, name, arity), do: parts
+    end)
+  end
+
+  defp import_matches?(:all, _name, _arity), do: true
+  defp import_matches?(only, name, arity) when is_list(only), do: Keyword.get(only, name) == arity
+  defp import_matches?(_only, _name, _arity), do: false
+
+  defp import_expandable_call?(form) do
+    form not in [
+      :alias,
+      :import,
+      :require,
+      :use,
+      :def,
+      :defp,
+      :defmodule,
+      :defmacro,
+      :defmacrop,
+      :fn,
+      :case,
+      :cond,
+      :with,
+      :if,
+      :unless,
+      :try,
+      :receive,
+      :for
+    ]
   end
 
   defp collect_alias_directive([target], acc), do: register_alias_target(acc, target)
@@ -323,6 +423,13 @@ defmodule ExAST.Pattern do
   end
 
   # --- Candidate prefiltering ---
+
+  defp broad?({:_, _meta, nil}), do: true
+
+  defp broad?({:__ex_ast_any_patterns__, patterns}) when is_list(patterns),
+    do: Enum.any?(patterns, &broad?/1)
+
+  defp broad?(_pattern), do: false
 
   defp signature({{:., nil, [_target, name]}, nil, args}) when is_atom(name) and is_list(args),
     do: {:call, name, arity_signature(args)}
@@ -444,6 +551,12 @@ defmodule ExAST.Pattern do
   # Map: partial key match
   defp do_match({:%{}, nil, skvs}, {:%{}, nil, pkvs}, caps) do
     match_subset(skvs, pkvs, caps)
+  end
+
+  # Directives: capture imported/aliased module names as a single node.
+  defp do_match({directive, nil, [source]}, {directive, nil, [{pname, nil, nil}]}, caps)
+       when directive in [:alias, :import] and is_atom(pname) do
+    bind(pname, source, caps)
   end
 
   # Dot-call: Module.function(args)

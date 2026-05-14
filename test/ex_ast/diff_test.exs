@@ -62,6 +62,29 @@ defmodule ExAST.DiffTest do
   end
 
   describe "function insertions and deletions" do
+    test "detects function renames as updates" do
+      left = """
+      defmodule Example do
+        def old_name(value) do
+          value + 1
+        end
+      end
+      """
+
+      right = """
+      defmodule Example do
+        def new_name(value) do
+          value + 1
+        end
+      end
+      """
+
+      result = Diff.diff(left, right)
+
+      assert Enum.any?(result.edits, &(&1.op == :update and &1.kind == :function))
+      refute Enum.any?(result.edits, &(&1.op in [:insert, :delete] and &1.kind == :function))
+    end
+
     test "detects inserted function" do
       left = """
       defmodule A do

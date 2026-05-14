@@ -19,7 +19,7 @@ defmodule ExAST.Index.Terms do
   @spec from_ast(Macro.t()) :: MapSet.t(String.t())
   def from_ast(ast), do: ast |> collect(:source) |> MapSet.new()
 
-  @spec from_pattern(ExAST.Pattern.pattern() | [ExAST.Pattern.pattern()]) :: MapSet.t(String.t())
+  @spec from_pattern(term() | [term()]) :: MapSet.t(String.t())
   def from_pattern({:__ex_ast_any_patterns__, patterns}) when is_list(patterns) do
     patterns
     |> Enum.map(&from_pattern/1)

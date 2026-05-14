@@ -10,6 +10,7 @@ defmodule Mix.Tasks.ExAst.Replace do
   ## Options
 
     * `--dry-run` — show changes without writing files
+    * `--format-output` — run the Elixir formatter on modified files
     * `--inside 'pattern'` — only replace inside ancestors matching this pattern
     * `--not-inside 'pattern'` — skip replacements inside ancestors matching this pattern
     * `--parent 'pattern'` / `--not-parent 'pattern'` — filter by direct semantic parent
@@ -43,13 +44,18 @@ defmodule Mix.Tasks.ExAst.Replace do
 
   use Mix.Task
 
+  alias ExAST.CLI.JSON
   alias ExAST.CLI.Output
   alias ExAST.CLI.SelectorOptions
 
   @impl Mix.Task
   def run(args) do
     {opts, positional, _} =
-      OptionParser.parse(args, strict: [dry_run: :boolean] ++ SelectorOptions.switches())
+      OptionParser.parse(args,
+        strict:
+          [dry_run: :boolean, format_output: :boolean, format: :string, json: :boolean] ++
+            SelectorOptions.switches()
+      )
 
     case positional do
       [pattern, replacement | paths] ->
@@ -66,10 +72,17 @@ defmodule Mix.Tasks.ExAst.Replace do
     validate_syntax!(replacement, "replacement")
 
     replace_pattern =
-      SelectorOptions.pattern(pattern, opts, &validate_filter_pattern!/1, [:dry_run])
+      SelectorOptions.pattern(pattern, opts, &validate_filter_pattern!/1, [
+        :dry_run,
+        :format_output,
+        :format,
+        :json
+      ])
 
     replace_opts = [
-      {:dry_run, opts[:dry_run] || false} | SelectorOptions.where_opts(opts, [:dry_run])
+      {:dry_run, opts[:dry_run] || false},
+      {:format, opts[:format_output] || false}
+      | SelectorOptions.where_opts(opts, [:dry_run, :format_output, :format, :json])
     ]
 
     results = ExAST.replace(paths, replace_pattern, replacement, replace_opts)
@@ -77,18 +90,32 @@ defmodule Mix.Tasks.ExAst.Replace do
     Output.with_stdout(fn -> print_results(results, opts) end)
   end
 
-  defp print_results([], _opts), do: Output.puts("No matches found.")
+  defp print_results([], opts) do
+    if json?(opts),
+      do: JSON.print(%{files: [], replacements: 0}),
+      else: Output.puts("No matches found.")
+  end
 
   defp print_results(files, opts) do
-    total = files |> Enum.map(&elem(&1, 1)) |> Enum.sum()
+    total = Enum.reduce(files, 0, fn {_file, count}, sum -> sum + count end)
     verb = if opts[:dry_run], do: "Would update", else: "Updated"
 
-    for {file, count} <- files do
-      Output.puts("#{verb} #{file} (#{count} replacement(s))")
-    end
+    if json?(opts) do
+      JSON.print(%{
+        dry_run: opts[:dry_run] || false,
+        replacements: total,
+        files: Enum.map(files, fn {file, count} -> %{file: file, replacements: count} end)
+      })
+    else
+      for {file, count} <- files do
+        Output.puts("#{verb} #{file} (#{count} replacement(s))")
+      end
 
-    Output.puts("\n#{total} replacement(s) in #{length(files)} file(s)")
+      Output.puts("\n#{total} replacement(s) in #{length(files)} file(s)")
+    end
   end
+
+  defp json?(opts), do: opts[:json] || opts[:format] == "json"
 
   defp validate_filter_pattern!(code), do: validate_syntax!(code, "filter pattern")
 

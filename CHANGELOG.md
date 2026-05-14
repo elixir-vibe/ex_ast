@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- JSON output for `mix ex_ast.search`, `mix ex_ast.replace`, and
+  `mix ex_ast.diff` via `--format json` / `--json`, backed by `Jason.Encoder`
+  protocol implementations for ExAST result structs.
+- `%ExAST.CompiledPattern{}` metadata for compiled patterns, including
+  candidate signatures, structural terms, and broad/multi-node flags.
+- `ExAST.Pattern.compile_ast/1` for callers that need the normalized pattern AST.
+- `ExAST.rewrite_plan/4` and `ExAST.Rewriter` for inspecting replacement plans
+  before applying patches, with overlapping-replacement conflict detection.
+- File-level parallelism for unbounded `ExAST.search/3` and `search_many/3`,
+  configurable with `:concurrency`.
+- Conservative source-text prefiltering using index terms to avoid parsing files
+  that cannot match a pattern.
+- `ExAST.Comments.associated/3` for retrieving comments related to a source
+  range (`:before`, `:after`, `:inside`, `:inline`, or aggregate `:comment`).
+- Import-aware call matching for imported functions such as
+  `import Ecto.Query, only: [from: 2]` matching `Ecto.Query.from(_, _)`.
+- Reach, ExSlop, and ExDNA-backed static analysis hardening in CI via an
+  isolated `tools/reach_runner` project.
+
+### Changed
+
+- `ExAST.Pattern.compile/1` now returns `%ExAST.CompiledPattern{}` instead of a
+  raw normalized AST. Use `ExAST.Pattern.compile_ast/1` for the old AST shape.
+- `ExAST.search/3` results now include the matched `:range`.
+- `ExAST.replace/4` now plans rewrites before applying them and supports
+  `format: true`; the CLI exposes this as `--format-output`.
+- Syntax-aware diffing now treats same-body function renames as function updates
+  rather than delete+insert pairs.
+- `mix ci` now includes explicit ExSlop smell analysis and Reach smell/dead-code
+  checks in addition to existing compile, format, Credo, Dialyzer, tests, and
+  ExDNA checks.
+
 ## 0.11.2
 
 ### Fixed

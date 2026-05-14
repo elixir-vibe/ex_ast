@@ -20,6 +20,7 @@ defmodule ExAST.Diff.Matcher do
     %{}
     |> anchor_roots(left, right)
     |> anchor_functions(left, right)
+    |> anchor_renamed_functions(left, right)
     |> anchor_semantic_nodes(left, right)
     |> anchor_children(left, right)
   end
@@ -64,6 +65,45 @@ defmodule ExAST.Diff.Matcher do
       end
     end)
   end
+
+  defp anchor_renamed_functions(mappings, left, right) do
+    used = MapSet.new(Map.values(mappings))
+
+    left.postorder_ids
+    |> Enum.map(&Annotated.fetch!(left, &1))
+    |> Enum.filter(&unmapped_function?(&1, mappings))
+    |> Enum.reduce(mappings, &anchor_renamed_function(&1, &2, right, used))
+  end
+
+  defp anchor_renamed_function(left_info, mappings, right, used) do
+    case find_unique(right, mappings, &renamed_function_candidate?(&1, left_info, used)) do
+      {:ok, right_id} -> Map.put(mappings, left_info.id, right_id)
+      :error -> mappings
+    end
+  end
+
+  defp unmapped_function?(info, mappings) do
+    info.kind == :function and not Map.has_key?(mappings, info.id)
+  end
+
+  defp renamed_function_candidate?(right_info, left_info, used) do
+    right_info.kind == :function and
+      not MapSet.member?(used, right_info.id) and
+      same_function_shape?(left_info, right_info)
+  end
+
+  defp same_function_shape?(left_info, right_info) do
+    function_visibility_arity(left_info.label) == function_visibility_arity(right_info.label) and
+      function_body(left_info.node) == function_body(right_info.node)
+  end
+
+  defp function_visibility_arity({visibility, _name, arity}) when visibility in [:def, :defp],
+    do: {visibility, arity}
+
+  defp function_visibility_arity(label), do: label
+
+  defp function_body({form, _meta, [_head, body]}) when form in [:def, :defp], do: body
+  defp function_body(node), do: node
 
   # --- Phase 3: remaining semantic nodes by similarity ---
 

@@ -225,7 +225,7 @@ defmodule ExAST.CLI.SelectorOptions do
   defp last_unescaped_slash(rest) do
     rest
     |> String.graphemes()
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce({nil, false}, fn
       {"/", index}, {_last, false} -> {index, false}
       {"\\", _index}, {last, false} -> {last, true}

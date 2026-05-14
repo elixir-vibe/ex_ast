@@ -272,7 +272,7 @@ defmodule ExAST.Diff.Classifier do
   defp render_label({:remote_call, target, fun, arity}),
     do: "#{format_target(target)}.#{fun}/#{arity}"
 
-  defp render_label({:struct, parts}), do: "%" <> Enum.join(parts, ".") <> "{}"
+  defp render_label({:struct, parts}), do: IO.iodata_to_binary(["%", Enum.join(parts, "."), "{}"])
   defp render_label({:map, _keys}), do: "%{}"
   defp render_label({:keyword, _keys}), do: "keyword"
   defp render_label(label) when is_atom(label), do: Atom.to_string(label)

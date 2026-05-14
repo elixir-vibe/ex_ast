@@ -24,9 +24,16 @@ defmodule Mix.Tasks.ExAst.Diff do
 
   use Mix.Task
 
+  alias ExAST.CLI.JSON
   alias ExAST.CLI.Output
 
-  @switches [json: :boolean, no_moves: :boolean, no_color: :boolean, summary: :boolean]
+  @switches [
+    json: :boolean,
+    format: :string,
+    no_moves: :boolean,
+    no_color: :boolean,
+    summary: :boolean
+  ]
 
   @impl Mix.Task
   def run(args) do
@@ -47,14 +54,16 @@ defmodule Mix.Tasks.ExAst.Diff do
 
     Output.with_stdout(fn ->
       cond do
-        opts[:json] -> print_json(result.edits)
+        json?(opts) -> print_json(result)
         opts[:summary] -> print_summary(result.summary)
         true -> print_diff(left_path, right_path, result, color?)
       end
     end)
   end
 
-  defp print_json(edits), do: Output.inspect(edits, pretty: true, limit: :infinity)
+  defp json?(opts), do: opts[:json] || opts[:format] == "json"
+
+  defp print_json(result), do: JSON.print(%{edits: result.edits, summary: result.summary})
 
   defp print_summary([]), do: Output.puts("No syntax-aware changes detected.")
   defp print_summary(lines), do: Enum.each(lines, &Output.puts/1)

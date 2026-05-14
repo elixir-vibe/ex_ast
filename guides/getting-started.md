@@ -45,6 +45,13 @@ Preview without writing files:
 mix ex_ast.replace --dry-run 'use Mix.Config' 'import Config' lib/
 ```
 
+Emit structured JSON for tools and agents:
+
+```bash
+mix ex_ast.search 'IO.inspect(expr)' lib/ --format json
+mix ex_ast.replace --dry-run 'dbg(expr)' 'expr' lib/ --format json
+```
+
 ## Programmatic API
 
 Everything the CLI does is available as functions:
@@ -58,6 +65,10 @@ ExAST.search("lib/", "IO.inspect(_)")
 ExAST.replace("lib/", "dbg(expr)", "expr")
 #=> [{"lib/worker.ex", 2}]
 
+# Plan replacements without applying them
+plan = ExAST.rewrite_plan(source_code, "dbg(expr)", "expr")
+#=> %ExAST.Rewriter.Plan{replacements: [...], conflicts: []}
+
 # Low-level: work with source strings
 ExAST.Patcher.find_all(source_code, "IO.inspect(_)")
 #=> [%{node: ..., range: ..., captures: %{}, source: "IO.inspect(data)"}]
@@ -65,6 +76,10 @@ ExAST.Patcher.find_all(source_code, "IO.inspect(_)")
 ExAST.Patcher.replace_all(source_code, "dbg(expr)", "expr")
 #=> "source with dbg calls removed"
 ```
+
+For large project searches, ExAST uses conservative text prefilters and scans
+files in parallel by default. Pass `concurrency: n` to tune file-level search
+parallelism.
 
 ## What's next
 

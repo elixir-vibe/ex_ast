@@ -56,10 +56,12 @@ defmodule ExAST do
 
   alias ExAST.Diff
   alias ExAST.Patcher
+  alias ExAST.Rewriter
 
   @type match :: %{
           file: String.t(),
           line: pos_integer(),
+          range: Sourceror.Range.t() | nil,
           source: String.t(),
           captures: ExAST.Pattern.captures()
         }
@@ -79,6 +81,7 @@ defmodule ExAST do
   Options:
     * `:limit` — stop after returning this many matches
     * `:allow_broad` — allow unbounded broad searches like `from("_")`
+    * `:concurrency` — file-level search concurrency for unbounded searches
   """
   @spec search(String.t() | [String.t()], String.t() | ExAST.Selector.t(), keyword()) :: [match()]
   def search(paths, pattern, opts \\ []) do
@@ -88,7 +91,7 @@ defmodule ExAST do
 
     case Keyword.get(opts, :limit) do
       nil ->
-        Enum.flat_map(files, &search_file(&1, pattern, search_opts))
+        parallel_flat_map(files, opts, &search_file(&1, pattern, search_opts))
 
       limit when is_integer(limit) and limit >= 0 ->
         search_files_limited(files, pattern, search_opts, limit)
@@ -115,7 +118,7 @@ defmodule ExAST do
 
     case Keyword.get(opts, :limit) do
       nil ->
-        Enum.flat_map(files, &search_file_many(&1, pattern_entries, search_opts))
+        parallel_flat_map(files, opts, &search_file_many(&1, pattern_entries, search_opts))
 
       limit when is_integer(limit) and limit >= 0 ->
         search_files_many_limited(files, pattern_entries, search_opts, limit)
@@ -129,6 +132,7 @@ defmodule ExAST do
   - `:dry_run` — return changes without writing (default: `false`)
   - `:inside` — only replace inside ancestors matching this pattern
   - `:not_inside` — skip replacements inside ancestors matching this pattern
+  - `:format` — format modified files with `Code.format_string!/1`
 
   Returns a list of `{file, count}` tuples for modified files.
   """
@@ -137,11 +141,12 @@ defmodule ExAST do
             {String.t(), pos_integer()}
           ]
   def replace(paths, pattern, replacement, opts \\ []) do
-    {dry_run, where_opts} = Keyword.pop(opts, :dry_run, false)
+    {dry_run, opts} = Keyword.pop(opts, :dry_run, false)
+    {format?, where_opts} = Keyword.pop(opts, :format, false)
 
     paths
     |> resolve_paths()
-    |> Enum.flat_map(&replace_file(&1, pattern, replacement, dry_run, where_opts))
+    |> Enum.flat_map(&replace_file(&1, pattern, replacement, dry_run, format?, where_opts))
   end
 
   @doc """
@@ -172,66 +177,85 @@ defmodule ExAST do
 
   defp search_files_limited(files, pattern, opts, limit) do
     files
-    |> Enum.reduce_while([], fn file, acc ->
-      remaining = limit - length(acc)
+    |> Enum.reduce_while({[], 0}, fn file, {acc, count} ->
+      remaining = limit - count
       matches = search_file(file, pattern, opts, remaining)
-      next = acc ++ matches
+      next_count = count + length(matches)
+      next_acc = prepend_reversed(matches, acc)
 
-      if length(next) >= limit do
-        {:halt, next}
+      if next_count >= limit do
+        {:halt, {next_acc, next_count}}
       else
-        {:cont, next}
+        {:cont, {next_acc, next_count}}
       end
     end)
+    |> elem(0)
+    |> Enum.reverse()
   end
 
   defp search_files_many_limited(_files, _patterns, _opts, 0), do: []
 
   defp search_files_many_limited(files, patterns, opts, limit) do
     files
-    |> Enum.reduce_while([], fn file, acc ->
-      remaining = limit - length(acc)
+    |> Enum.reduce_while({[], 0}, fn file, {acc, count} ->
+      remaining = limit - count
       matches = search_file_many(file, patterns, opts, remaining)
-      next = acc ++ matches
+      next_count = count + length(matches)
+      next_acc = prepend_reversed(matches, acc)
 
-      if length(next) >= limit do
-        {:halt, next}
+      if next_count >= limit do
+        {:halt, {next_acc, next_count}}
       else
-        {:cont, next}
+        {:cont, {next_acc, next_count}}
       end
     end)
+    |> elem(0)
+    |> Enum.reverse()
   end
+
+  defp prepend_reversed(items, acc), do: Enum.reduce(items, acc, &[&1 | &2])
 
   defp search_file(file, pattern, opts, limit \\ nil) do
     source = File.read!(file)
-    lines = String.split(source, "\n", trim: false)
 
-    source
-    |> Patcher.find_all(pattern, opts)
-    |> maybe_take(limit)
-    |> Enum.map(fn %{range: range, node: node, captures: captures} ->
-      search_match(file, lines, range, node, captures)
-    end)
+    if ExAST.Prefilter.may_match?(source, pattern) do
+      lines = String.split(source, "\n", trim: false)
+
+      source
+      |> Patcher.find_all(pattern, opts)
+      |> maybe_take(limit)
+      |> Enum.map(fn %{range: range, node: node, captures: captures} ->
+        search_match(file, lines, range, node, captures)
+      end)
+    else
+      []
+    end
   end
 
   defp search_file_many(file, patterns, opts, limit \\ nil) do
     source = File.read!(file)
-    lines = String.split(source, "\n", trim: false)
 
-    source
-    |> Patcher.find_many(patterns, opts)
-    |> maybe_take(limit)
-    |> Enum.map(fn %{pattern: pattern, range: range, node: node, captures: captures} ->
-      file
-      |> search_match(lines, range, node, captures)
-      |> Map.put(:pattern, pattern)
-    end)
+    if Enum.any?(patterns, fn {_name, pattern} -> ExAST.Prefilter.may_match?(source, pattern) end) do
+      lines = String.split(source, "\n", trim: false)
+
+      source
+      |> Patcher.find_many(patterns, opts)
+      |> maybe_take(limit)
+      |> Enum.map(fn %{pattern: pattern, range: range, node: node, captures: captures} ->
+        file
+        |> search_match(lines, range, node, captures)
+        |> Map.put(:pattern, pattern)
+      end)
+    else
+      []
+    end
   end
 
   defp search_match(file, lines, range, node, captures) do
     %{
       file: file,
       line: match_line(range),
+      range: range,
       source: source_fragment(lines, range) || node_to_string(node),
       captures: captures
     }
@@ -263,17 +287,48 @@ defmodule ExAST do
   defp broad_pattern?(patterns) when is_list(patterns), do: Enum.any?(patterns, &broad_pattern?/1)
   defp broad_pattern?(_pattern), do: false
 
-  defp replace_file(file, pattern, replacement, dry_run, where_opts) do
-    source = File.read!(file)
-    matches = Patcher.find_all(source, pattern, where_opts)
+  @doc """
+  Builds a rewrite plan for source without applying it.
+  """
+  @spec rewrite_plan(String.t(), String.t() | ExAST.Selector.t(), String.t(), keyword()) ::
+          ExAST.Rewriter.Plan.t()
+  def rewrite_plan(source, pattern, replacement, opts \\ []) do
+    Rewriter.plan(source, pattern, replacement, opts)
+  end
 
-    if matches == [] do
-      []
+  defp replace_file(file, pattern, replacement, dry_run, format?, where_opts) do
+    source = File.read!(file)
+
+    if ExAST.Prefilter.may_match?(source, pattern) do
+      source
+      |> Rewriter.plan(pattern, replacement, where_opts)
+      |> apply_rewrite_plan(file, source, dry_run, format?)
     else
-      result = Patcher.replace_all(source, pattern, replacement, where_opts)
-      unless dry_run, do: File.write!(file, result)
-      [{file, length(matches)}]
+      []
     end
+  end
+
+  defp apply_rewrite_plan(%Rewriter.Plan{replacements: []}, _file, _source, _dry_run, _format?),
+    do: []
+
+  defp apply_rewrite_plan(
+         %Rewriter.Plan{replacements: replacements} = plan,
+         file,
+         source,
+         dry_run,
+         format?
+       ) do
+    result = source |> Rewriter.apply(plan, on_conflict: :raise) |> maybe_format(format?)
+    unless dry_run, do: File.write!(file, result)
+    [{file, length(replacements)}]
+  end
+
+  defp maybe_format(source, false), do: source
+
+  defp maybe_format(source, true) do
+    source |> Code.format_string!() |> IO.iodata_to_binary()
+  rescue
+    _ -> source
   end
 
   defp match_line(%{start: start}) when is_list(start), do: start[:line] || 1
@@ -324,6 +379,14 @@ defmodule ExAST do
     Macro.to_string(node)
   rescue
     _ -> inspect(node)
+  end
+
+  defp parallel_flat_map(files, opts, fun) do
+    concurrency = Keyword.get(opts, :concurrency, System.schedulers_online())
+
+    files
+    |> Task.async_stream(fun, ordered: true, max_concurrency: concurrency)
+    |> Enum.flat_map(fn {:ok, matches} -> matches end)
   end
 
   defp resolve_paths(paths) when is_list(paths), do: Enum.flat_map(paths, &resolve_paths/1)

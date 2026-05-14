@@ -15,6 +15,7 @@ Search files for AST pattern matches. PATH can be a file, directory, or glob.
 | `--count` | Print match count only |
 | `--limit N` | Stop after N matches |
 | `--allow-broad` | Allow patterns like `_` that match everything |
+| `--format json` / `--json` | Print structured JSON output |
 | `--inside PATTERN` | Only match inside ancestors matching pattern |
 | `--not-inside PATTERN` | Reject matches inside ancestors matching pattern |
 | `--parent PATTERN` | Direct semantic parent matches pattern |
@@ -82,6 +83,8 @@ Same relationship filters as `search`. Additional:
 | Flag | Meaning |
 |------|---------|
 | `--dry-run` | Preview changes without writing files |
+| `--format json` / `--json` | Print structured JSON summary |
+| `--format-output` | Run the Elixir formatter on modified files |
 
 ### Examples
 
@@ -94,6 +97,12 @@ mix ex_ast.replace 'Repo.get!(mod, id)' 'Repo.get!(mod, id) || raise NotFoundErr
 
 # Preview without writing
 mix ex_ast.replace --dry-run 'use Mix.Config' 'import Config' lib/
+
+# Preview as JSON
+mix ex_ast.replace --dry-run --format json 'dbg(expr)' 'expr' lib/
+
+# Format changed files
+mix ex_ast.replace --format-output 'dbg(expr)' 'expr' lib/
 
 # Only outside tests
 mix ex_ast.replace --not-inside 'test _ do _ end' 'IO.inspect(expr)' 'expr' lib/
@@ -114,7 +123,7 @@ Syntax-aware diff between two Elixir files.
 | `--summary` | Print summary lines only |
 | `--no-moves` | Disable move detection |
 | `--no-color` | Disable colored output |
-| `--json` | Print edits as JSON |
+| `--json` / `--format json` | Print edits as JSON |
 
 ### Example output
 

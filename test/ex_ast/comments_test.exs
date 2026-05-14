@@ -19,4 +19,19 @@ defmodule ExAST.CommentsTest do
   test "joins comment text" do
     assert Comments.text("# one\n# two\n") == "# one\n# two"
   end
+
+  test "finds comments associated with a range" do
+    source = """
+    # public API
+    def run do
+      value = 1 # inline
+    end
+    """
+
+    [match] = ExAST.Patcher.find_all(source, "def run do ... end")
+
+    assert [before] = Comments.associated(source, match.range, :before)
+    assert before.text == "# public API"
+    assert Enum.any?(Comments.associated(source, match.range, :inside), &(&1.text == "# inline"))
+  end
 end
