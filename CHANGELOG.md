@@ -9,7 +9,7 @@
   protocol implementations for ExAST result structs.
 - `%ExAST.CompiledPattern{}` metadata for compiled patterns, including
   candidate signatures, structural terms, and broad/multi-node flags.
-- `<code>ExAST.Pattern.compile_ast/1</code>` for callers that need the normalized pattern AST.
+- `ExAST.Pattern.compile_ast/1` for callers that need the normalized pattern AST.
 - `ExAST.rewrite_plan/4` and `ExAST.Rewriter` for inspecting replacement plans
   before applying patches, with overlapping-replacement conflict detection.
 - File-level parallelism for unbounded `ExAST.search/3` and `search_many/3`,
@@ -25,8 +25,8 @@
 
 ### Changed
 
-- `<code>ExAST.Pattern.compile/1</code>` now returns `%ExAST.CompiledPattern{}` instead of a
-  raw normalized AST. Use `<code>ExAST.Pattern.compile_ast/1</code>` for the old AST shape.
+- `ExAST.Pattern.compile/1` now returns `%ExAST.CompiledPattern{}` instead of a
+  raw normalized AST. Use `ExAST.Pattern.compile_ast/1` for the old AST shape.
 - `ExAST.search/3` results now include the matched `:range`.
 - `ExAST.replace/4` now plans rewrites before applying them and supports
   `format: true`; the CLI exposes this as `--format-output`.

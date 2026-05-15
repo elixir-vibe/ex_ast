@@ -70,8 +70,17 @@ defmodule ExAST.Pattern do
     match_compiled(node, compile(pattern), alias_env)
   end
 
-  @doc false
-  @spec compile(pattern()) :: ExAST.CompiledPattern.t()
+  @doc """
+  Compiles a pattern into reusable matching metadata.
+
+  Most callers should prefer the higher-level search and patching APIs. Use this
+  when matching the same pattern repeatedly and passing it to functions that
+  accept compiled patterns.
+
+  Since v0.12.0 this returns `%ExAST.CompiledPattern{}`. If you need the
+  normalized pattern AST returned by earlier versions, use `compile_ast/1`.
+  """
+  @spec compile(pattern() | ExAST.CompiledPattern.t()) :: ExAST.CompiledPattern.t()
   def compile(%CompiledPattern{} = compiled), do: compiled
 
   def compile(pattern) do
@@ -87,8 +96,13 @@ defmodule ExAST.Pattern do
     )
   end
 
-  @doc false
-  @spec compile_ast(pattern()) :: Macro.t()
+  @doc """
+  Returns the normalized AST for a pattern.
+
+  This preserves the pre-v0.12.0 `compile/1` return shape for callers that need
+  to inspect or reuse the normalized pattern AST directly.
+  """
+  @spec compile_ast(pattern() | ExAST.CompiledPattern.t()) :: Macro.t()
   def compile_ast(%CompiledPattern{ast: ast}), do: ast
   def compile_ast(pattern), do: pattern |> to_quoted() |> normalize()
 
