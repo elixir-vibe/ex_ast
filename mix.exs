@@ -8,7 +8,7 @@ defmodule ExAST.MixProject do
     [
       app: :ex_ast,
       version: @version,
-      elixir: "~> 1.15",
+      elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       name: "ExAST",

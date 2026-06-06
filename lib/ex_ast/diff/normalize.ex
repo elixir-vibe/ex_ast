@@ -46,13 +46,13 @@ defmodule ExAST.Diff.Normalize do
   def label({{:., _, [target, fun]}, _, args}),
     do: {:remote_call, alias_parts(target), fun, length(args || [])}
 
-  def label({name, _, args}) when is_atom(name) and is_list(args),
-    do: {:call, name, length(args)}
-
   def label({:%, _, [name, _]}), do: {:struct, alias_parts(name)}
 
   def label({:%{}, _, kvs}) when is_list(kvs),
     do: {:map, Enum.map(kvs, &elem(&1, 0))}
+
+  def label({name, _, args}) when is_atom(name) and is_list(args),
+    do: {:call, name, length(args)}
 
   def label(list) when is_list(list) do
     if Keyword.keyword?(list), do: {:keyword, Keyword.keys(list)}, else: :list

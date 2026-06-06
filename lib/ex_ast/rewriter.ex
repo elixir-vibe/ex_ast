@@ -115,7 +115,6 @@ defmodule ExAST.Rewriter do
 
   defp range_start_key(nil), do: {0, 0}
   defp range_start_key(range), do: {range.start[:line] || 0, range.start[:column] || 0}
-  defp range_end_key(nil), do: {0, 0}
   defp range_end_key(range), do: {range.end[:line] || 0, range.end[:column] || 0}
 
   defp to_quoted(pattern) when is_binary(pattern), do: Code.string_to_quoted!(pattern)
