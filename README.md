@@ -3,7 +3,10 @@
 Search, replace, and diff Elixir code by AST pattern.
 
 Patterns are plain Elixir — variables capture, `_` is a wildcard,
-structs match partially, pipes are normalized. No regex, no custom DSL.
+structs match partially, pipes are normalized. `...` captures variable arity,
+`^name` matches a literal variable name, `name`/`fun`/`function` can capture
+function names in definitions, and `fun`/`function` can capture call names. No
+regex, no custom DSL.
 
 ```bash
 mix ex_ast.search  'IO.inspect(_)'
@@ -77,8 +80,14 @@ end
 Enum.map(_, _)
 Logger.info(...)
 
-# Definitions
+# Definitions and function-name captures
 def handle_call(msg, _, state) do _ end
+def name(_, _) do ... end      # captures the definition name
+Repo.fun(changeset)            # captures remote call names like insert/update
+fun(changeset)                 # captures local call names
+
+# Literal variable names
+{:reply, ^state, ^state}
 
 # Pipes (matches both forms)
 Enum.map(data, f)           # also matches: data |> Enum.map(f)
@@ -95,9 +104,10 @@ a = Repo.get!(_, _); Repo.delete(a)
 use GenServer
 @env Application.get_env(_, _)
 
-# Control flow
+# Control flow and standalone clauses
 case _ do _ -> _ end
 fn _ -> _ end
+{:error, e} -> raise e
 ```
 
 ## Code intelligence APIs
@@ -133,8 +143,20 @@ Use these terms and facts to retrieve candidates, then verify with
 ## Limitations
 
 - Alias/import expansion is syntax-aware, not full semantic macro expansion
+- Function-name placeholders are intentionally limited: definitions use `name`, `fun`, or `function`; call heads use `fun` or `function`
 - Multi-node patterns require contiguous statements
 - Replacement formatting uses `Macro.to_string/1`; pass `format: true` or run `mix format` after
+
+## Part of Elixir Vibe
+
+ExAST searches and rewrites Elixir by AST pattern — the structural editing layer the rest of the stack builds on.
+
+It is one building block of a larger stack — tools that make AI-generated
+software checkable: structural search, dependence analysis, duplication and
+slop detection, session replay, and ecosystem-wide code search. See the
+[Elixir Vibe](https://github.com/elixir-vibe) organization for the rest, and
+[Building Blocks for the Future Web](https://github.com/elixir-vibe/building-blocks)
+for the thesis, architecture, and roadmap that tie them together.
 
 ## License
 
