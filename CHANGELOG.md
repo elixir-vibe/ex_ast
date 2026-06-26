@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.12.1
+
+### Changed
+
+- `ExAST.Patcher.find_many/3` now batches simple single-step selectors with
+  single-node patterns, reducing repeated selector traversals while preserving
+  tagged results.
+
+### Fixed
+
+- `ExAST.Patcher.find_many/3` now passes source comments to selector filters for
+  source-string input, matching `find_all/3` behavior.
+
 ## 0.12.0
 
 ### Added
