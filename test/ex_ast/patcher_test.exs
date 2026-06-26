@@ -619,6 +619,110 @@ defmodule ExAST.PatcherTest do
       assert [%{source: "IO.inspect(2)", pattern: :inspect_call}] = matches
     end
 
+    test "finds single-step selectors with tagged results" do
+      import ExAST.Query
+
+      source = """
+      Enum.into(opts, %{})
+      Enum.into(opts, %{a: 1})
+      text |> Regex.replace(~r/foo/, "")
+      Regex.replace(~r/foo/, text, "")
+      """
+
+      matches =
+        Patcher.find_many(source,
+          into_empty_map:
+            from("Enum.into(_, target)")
+            |> where(match?({:%{}, _, []}, ^target)),
+          piped_replace:
+            from("Regex.replace(_, _, _)")
+            |> where(piped())
+        )
+
+      assert Enum.map(matches, & &1.pattern) == [:into_empty_map, :piped_replace]
+
+      assert Enum.map(matches, & &1.source) == [
+               "Enum.into(opts, %{})",
+               "text |> Regex.replace(~r/foo/, \"\")"
+             ]
+    end
+
+    test "batched selectors respect find_many inside and not_inside options" do
+      import ExAST.Query
+
+      source = """
+      def public do
+        IO.inspect(:public)
+      end
+
+      defp private do
+        IO.inspect(:private)
+      end
+      """
+
+      selector = from("IO.inspect(value)") |> where(match?(atom when is_atom(atom), ^value))
+
+      assert [%{pattern: :inspect_atom, source: "IO.inspect(:private)"}] =
+               Patcher.find_many(source, [inspect_atom: selector], inside: "defp _ do ... end")
+
+      assert [%{pattern: :inspect_atom, source: "IO.inspect(:public)"}] =
+               Patcher.find_many(source, [inspect_atom: selector],
+                 not_inside: "defp _ do ... end"
+               )
+    end
+
+    test "batched selectors preserve comment filters" do
+      import ExAST.Query
+
+      source = """
+      # generated helper
+      def generated do
+        :ok
+      end
+
+      def regular do
+        :ok
+      end
+      """
+
+      assert [%{pattern: :generated, source: source_fragment}] =
+               Patcher.find_many(source,
+                 generated:
+                   from("def name do ... end")
+                   |> where(comment_before("generated helper"))
+               )
+
+      assert source_fragment =~ "def generated"
+    end
+
+    test "multi-step selectors still return tagged fallback results" do
+      import ExAST.Selector
+
+      source = """
+      defmodule Example do
+        def run do
+          IO.inspect(:ok)
+        end
+      end
+      """
+
+      selector =
+        pattern("defmodule Example do ... end")
+        |> descendant("IO.inspect(value)")
+
+      assert [%{pattern: :nested_inspect, captures: %{value: :ok}}] =
+               Patcher.find_many(source, nested_inspect: selector)
+    end
+
+    test "batched selectors do not change nested single-pattern blocking" do
+      source = """
+      IO.inspect(IO.inspect(value))
+      """
+
+      assert [%{pattern: :inspect, source: "IO.inspect(IO.inspect(value))"}] =
+               Patcher.find_many(source, inspect: "IO.inspect(_)")
+    end
+
     test "falls back for sequence patterns with tagged results" do
       source = """
       a = Repo.get!(User, id)

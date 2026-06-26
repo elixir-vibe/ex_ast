@@ -116,7 +116,12 @@ defmodule ExAST.Patcher do
   def find_many(source, patterns, opts) when is_binary(source) do
     source
     |> Sourceror.parse_string!()
-    |> do_find_many(named_patterns!(patterns), opts, nil, source_lines(source))
+    |> do_find_many(
+      named_patterns!(patterns),
+      opts,
+      source_comments(source),
+      source_lines(source)
+    )
   end
 
   def find_many(%Zipper{} = zipper, patterns, opts) do
@@ -234,8 +239,11 @@ defmodule ExAST.Patcher do
 
     compiled_matches =
       case compiled do
-        [] -> []
-        patterns -> ast |> Zipper.zip() |> collect_many_matches(patterns, alias_env, %{}, [])
+        [] ->
+          []
+
+        patterns ->
+          ast |> Zipper.zip() |> collect_many_matches(patterns, ast, alias_env, comments, %{}, [])
       end
 
     compiled_matches = apply_where(compiled_matches, opts, alias_env, source_lines)
@@ -308,62 +316,88 @@ defmodule ExAST.Patcher do
     end
   end
 
-  defp collect_many_matches(nil, _patterns, _alias_env, _blocked, acc), do: Enum.reverse(acc)
+  defp collect_many_matches(nil, _patterns, _root_ast, _alias_env, _comments, _blocked, acc),
+    do: Enum.reverse(acc)
 
-  defp collect_many_matches(zipper, patterns, alias_env, blocked, acc) do
+  defp collect_many_matches(zipper, patterns, root_ast, alias_env, comments, blocked, acc) do
     node = Zipper.node(zipper)
 
     candidates =
-      Enum.filter(patterns, fn {_id, _name, _pattern, signature} ->
-        Pattern.candidate?(node, signature)
+      Enum.filter(patterns, fn entry ->
+        Pattern.candidate?(node, many_entry_signature(entry))
       end)
 
     if candidates == [] do
-      zipper |> Zipper.next() |> collect_many_matches(patterns, alias_env, blocked, acc)
+      zipper
+      |> Zipper.next()
+      |> collect_many_matches(patterns, root_ast, alias_env, comments, blocked, acc)
     else
-      collect_many_candidate_matches(zipper, candidates, patterns, alias_env, blocked, acc)
+      collect_many_candidate_matches(
+        zipper,
+        candidates,
+        patterns,
+        root_ast,
+        alias_env,
+        comments,
+        blocked,
+        acc
+      )
     end
   end
 
-  defp collect_many_candidate_matches(zipper, candidates, patterns, alias_env, blocked, acc) do
+  defp collect_many_candidate_matches(
+         zipper,
+         candidates,
+         patterns,
+         root_ast,
+         alias_env,
+         comments,
+         blocked,
+         acc
+       ) do
     node = Zipper.node(zipper)
     normalized_node = Pattern.normalize_node(node, alias_env)
     ancestors = if map_size(blocked) == 0, do: nil, else: collect_ancestors(zipper)
 
-    {blocked, matches} =
-      match_many_patterns(
-        candidates,
-        node,
-        normalized_node,
-        ancestors,
-        fn -> collect_ancestors(zipper) end,
-        blocked
-      )
+    context = %{
+      ancestors: ancestors,
+      get_ancestors: fn -> collect_ancestors(zipper) end,
+      node: node,
+      normalized_node: normalized_node,
+      root_ast: root_ast,
+      alias_env: alias_env,
+      comments: comments
+    }
+
+    {blocked, matches} = match_many_patterns(candidates, context, blocked)
 
     zipper
     |> Zipper.next()
-    |> collect_many_matches(patterns, alias_env, blocked, matches ++ acc)
+    |> collect_many_matches(patterns, root_ast, alias_env, comments, blocked, matches ++ acc)
   end
 
-  defp match_many_patterns(patterns, node, normalized_node, ancestors, get_ancestors, blocked) do
-    context = %{
-      ancestors: ancestors,
-      get_ancestors: get_ancestors,
-      normalized_node: normalized_node
-    }
+  defp match_many_patterns(patterns, context, blocked) do
+    Enum.reduce(patterns, {blocked, []}, fn entry, {blocked, matches} ->
+      id = many_entry_id(entry)
 
-    Enum.reduce(patterns, {blocked, []}, fn {id, _name, _pattern, _signature} = entry,
-                                            {blocked, matches} ->
-      if blocked_by_ancestor?(ancestors, Map.get(blocked, id, [])) do
+      if blocked_by_ancestor?(context.ancestors, Map.get(blocked, id, [])) do
         {blocked, matches}
       else
-        match_many_pattern(entry, node, context, blocked, matches)
+        match_many_pattern(entry, context.node, context, blocked, matches)
       end
     end)
   end
 
+  defp many_entry_id({:pattern, id, _name, _pattern, _signature}), do: id
+  defp many_entry_id({:selector, id, _name, _selector, _pattern, _signature, _filters}), do: id
+
+  defp many_entry_signature({:pattern, _id, _name, _pattern, signature}), do: signature
+
+  defp many_entry_signature({:selector, _id, _name, _selector, _pattern, signature, _filters}),
+    do: signature
+
   defp match_many_pattern(
-         {id, name, %ExAST.CompiledPattern{ast: ast}, _signature},
+         {:pattern, id, name, %ExAST.CompiledPattern{ast: ast}, _signature},
          node,
          context,
          blocked,
@@ -380,6 +414,40 @@ defmodule ExAST.Patcher do
         }
 
         {Map.update(blocked, id, [node], &[node | &1]), [match | matches]}
+
+      :error ->
+        {blocked, matches}
+    end
+  end
+
+  defp match_many_pattern(
+         {:selector, _id, name, _selector, %ExAST.CompiledPattern{ast: ast}, _signature, filters},
+         node,
+         context,
+         blocked,
+         matches
+       ) do
+    case Pattern.match_normalized(context.normalized_node, ast) do
+      {:ok, captures} ->
+        match = %{
+          pattern: name,
+          node: node,
+          range: safe_range(node),
+          captures: captures,
+          ancestors: context.ancestors || context.get_ancestors.()
+        }
+
+        if apply_selector_filters(
+             [match],
+             filters,
+             context.root_ast,
+             context.alias_env,
+             context.comments
+           ) == [] do
+          {blocked, matches}
+        else
+          {blocked, [match | matches]}
+        end
 
       :error ->
         {blocked, matches}
@@ -976,17 +1044,41 @@ defmodule ExAST.Patcher do
 
   defp split_many_patterns(patterns) do
     patterns
-    |> Enum.with_index()
-    |> Enum.split_with(fn {{_name, pattern}, _idx} -> single_node_pattern?(pattern) end)
-    |> then(fn {compiled, fallback} ->
-      {
-        Enum.map(compiled, fn {{name, pattern}, idx} ->
-          compiled_pattern = Pattern.compile(pattern)
-          {idx, name, compiled_pattern, Pattern.candidate_signature(compiled_pattern)}
-        end),
-        Enum.map(fallback, fn {{name, pattern}, _idx} -> {name, pattern} end)
-      }
+    |> Stream.with_index()
+    |> Enum.reduce({[], []}, fn {{name, pattern}, idx}, {compiled, fallback} ->
+      case many_compiled_entry(idx, name, pattern) do
+        {:ok, entry} -> {[entry | compiled], fallback}
+        :error -> {compiled, [{name, pattern} | fallback]}
+      end
     end)
+    |> then(fn {compiled, fallback} -> {Enum.reverse(compiled), Enum.reverse(fallback)} end)
+  end
+
+  defp many_compiled_entry(
+         idx,
+         name,
+         %Selector{steps: [{:self, pattern}], filters: filters} = selector
+       ) do
+    if single_node_pattern?(pattern) do
+      compiled_pattern = Pattern.compile(pattern)
+
+      {:ok,
+       {:selector, idx, name, selector, compiled_pattern,
+        Pattern.candidate_signature(compiled_pattern), filters}}
+    else
+      :error
+    end
+  end
+
+  defp many_compiled_entry(idx, name, pattern) do
+    if single_node_pattern?(pattern) do
+      compiled_pattern = Pattern.compile(pattern)
+
+      {:ok,
+       {:pattern, idx, name, compiled_pattern, Pattern.candidate_signature(compiled_pattern)}}
+    else
+      :error
+    end
   end
 
   defp single_node_pattern?(%Selector{}), do: false
