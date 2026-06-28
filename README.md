@@ -142,7 +142,7 @@ Use these terms and facts to retrieve candidates, then verify with
 
 ## Limitations
 
-- Alias/import expansion is syntax-aware, not full semantic macro expansion
+- Alias/import expansion is syntax-aware, not full semantic macro expansion. A bare `import Mod` is not expanded by default; pass `expand_imports: true` (or `--expand-imports`) to resolve it from `Mod`'s real exports
 - Function-name placeholders are intentionally limited: definitions use `name`, `fun`, or `function`; call heads use `fun` or `function`
 - Multi-node patterns require contiguous statements
 - Replacement formatting uses `Macro.to_string/1`; pass `format: true` or run `mix format` after

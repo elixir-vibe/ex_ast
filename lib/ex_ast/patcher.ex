@@ -59,6 +59,10 @@ defmodule ExAST.Patcher do
 
     * `:inside` — only match nodes nested within an ancestor matching this pattern
     * `:not_inside` — reject nodes nested within an ancestor matching this pattern
+    * `:expand_imports` — when `true`, resolve a bare `import Mod` (and the
+      complement of `import Mod, except: [...]`) to the module's real exports,
+      loaded via the BEAM, so calls like `map(a, b)` match `Mod.map(_, _)`.
+      Defaults to `false`; requires `Mod` to be loadable.
   """
   @spec find_all(String.t() | Zipper.t() | Macro.t(), Pattern.pattern() | Selector.t(), keyword()) ::
           [
@@ -209,7 +213,7 @@ defmodule ExAST.Patcher do
   defp do_find_all(ast, pattern, opts, comments, source_lines)
 
   defp do_find_all(ast, %Selector{} = selector, opts, comments, source_lines) do
-    alias_env = Pattern.collect_aliases(ast)
+    alias_env = Pattern.collect_aliases(ast, opts)
 
     ast
     |> collect_selector_matches(selector, alias_env)
@@ -219,7 +223,7 @@ defmodule ExAST.Patcher do
   end
 
   defp do_find_all(ast, pattern, opts, _comments, source_lines) do
-    alias_env = Pattern.collect_aliases(ast)
+    alias_env = Pattern.collect_aliases(ast, opts)
 
     matches =
       if Pattern.multi_node?(pattern) do
@@ -234,7 +238,7 @@ defmodule ExAST.Patcher do
   end
 
   defp do_find_many(ast, patterns, opts, comments, source_lines) do
-    alias_env = Pattern.collect_aliases(ast)
+    alias_env = Pattern.collect_aliases(ast, opts)
     {compiled, fallback} = split_many_patterns(patterns)
 
     compiled_matches =

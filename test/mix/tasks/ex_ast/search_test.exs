@@ -226,6 +226,28 @@ defmodule Mix.Tasks.ExAst.SearchTest do
     end
 
     @tag :tmp_dir
+    test "expands bare imports with --expand-imports", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "import Enum\n\nmap(list, &(&1 + 1))\n")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["Enum.map(_, _)", file])
+        end)
+
+      assert output =~ "0 match(es)"
+
+      Mix.Task.reenable("ex_ast.search")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["Enum.map(_, _)", file, "--expand-imports"])
+        end)
+
+      assert output =~ "1 match(es)"
+    end
+
+    @tag :tmp_dir
     test "prints JSON with Jason", %{tmp_dir: dir} do
       file = Path.join(dir, "sample.ex")
       File.write!(file, "IO.inspect(value)\n")
