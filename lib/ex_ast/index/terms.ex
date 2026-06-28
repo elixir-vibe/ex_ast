@@ -35,8 +35,10 @@ defmodule ExAST.Index.Terms do
   def from_pattern(pattern), do: pattern |> to_quoted() |> collect(:pattern) |> MapSet.new()
 
   @spec signal(String.t()) :: signal()
-  def signal("atom:" <> atom) when atom in ["do", "nil", "true", "false", "ok", "error"],
+  def signal("atom:" <> atom) when atom in ["do", "nil", "ok", "error"],
     do: :low
+
+  def signal("atom:" <> atom) when atom in ["true", "false"], do: :normal
 
   def signal("node:call"), do: :low
   def signal("node:local_call"), do: :low
@@ -178,7 +180,7 @@ defmodule ExAST.Index.Terms do
     end
   end
 
-  defp visit(atom, terms, _mode) when is_atom(atom) and atom not in [nil, true, false] do
+  defp visit(atom, terms, _mode) when is_atom(atom) and not is_nil(atom) do
     {atom, ["atom:#{atom}" | terms]}
   end
 

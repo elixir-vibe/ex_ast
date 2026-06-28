@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.3
+
+### Fixed
+
+- Boolean literals are now included as low-signal index terms so structural candidate filtering can narrow patterns that explicitly match `true` or `false`.
+
 ## 0.12.2
 
 ### Fixed

@@ -7,6 +7,7 @@ defmodule ExAST.Index do
   matches with ExAST.
   """
 
+  alias ExAST.CompiledPattern
   alias ExAST.Index.{Plan, Terms}
   alias ExAST.Selector
   alias ExAST.Selector.{CommentMatcher, Predicate}
@@ -25,6 +26,11 @@ defmodule ExAST.Index do
       requires_source?: Selector.requires_source?(selector),
       requires_comments?: Selector.requires_comments?(selector)
     }
+  end
+
+  def plan(%CompiledPattern{terms: terms}) do
+    {required, optional} = partition_terms(terms)
+    %Plan{required_terms: required, optional_terms: optional}
   end
 
   def plan(pattern) do
