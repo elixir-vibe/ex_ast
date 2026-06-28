@@ -22,6 +22,24 @@ defmodule ExASTTest do
     end
 
     @tag :tmp_dir
+    test "includes .exs files from explicit paths, globs, and directories", %{tmp_dir: dir} do
+      explicit_file = Path.join(dir, "sample_test.exs")
+      nested_dir = Path.join(dir, "nested")
+      File.mkdir_p!(nested_dir)
+      globbed_file = Path.join(nested_dir, "globbed_test.exs")
+
+      File.write!(explicit_file, "IO.inspect(:explicit)\n")
+      File.write!(globbed_file, "IO.inspect(:globbed)\n")
+
+      assert [%{file: ^explicit_file}] = ExAST.search(explicit_file, "IO.inspect(_)")
+
+      assert [%{file: ^globbed_file}] =
+               ExAST.search(Path.join(nested_dir, "**/*_test.exs"), "IO.inspect(_)")
+
+      assert [_, _] = ExAST.search(dir, "IO.inspect(_)")
+    end
+
+    @tag :tmp_dir
     test "returns full source and captures", %{tmp_dir: dir} do
       File.write!(Path.join(dir, "a.ex"), """
       IO.inspect(data, label: "debug")
@@ -88,6 +106,15 @@ defmodule ExASTTest do
       assert content =~ "dbg(data)"
       assert content =~ "dbg(other)"
       assert content =~ "IO.puts"
+    end
+
+    @tag :tmp_dir
+    test "modifies .exs files", %{tmp_dir: dir} do
+      path = Path.join(dir, "sample_test.exs")
+      File.write!(path, "IO.inspect(data)\n")
+
+      [{^path, 1}] = ExAST.replace(path, "IO.inspect(expr)", "dbg(expr)")
+      assert File.read!(path) == "dbg(data)\n"
     end
 
     @tag :tmp_dir

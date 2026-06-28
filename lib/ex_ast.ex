@@ -394,9 +394,11 @@ defmodule ExAST do
   defp resolve_paths(glob) when is_binary(glob) do
     cond do
       String.contains?(glob, "*") -> Path.wildcard(glob)
-      File.dir?(glob) -> Path.wildcard(Path.join(glob, "**/*.ex"))
+      File.dir?(glob) -> Path.wildcard(Path.join(glob, "**/*.{ex,exs}"))
       true -> [glob]
     end
-    |> Enum.filter(&String.ends_with?(&1, ".ex"))
+    |> Enum.filter(&elixir_source_file?/1)
   end
+
+  defp elixir_source_file?(path), do: String.ends_with?(path, [".ex", ".exs"])
 end
