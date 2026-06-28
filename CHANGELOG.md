@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.12.2
+
+### Fixed
+
+- `ExAST.search/3`, `ExAST.Patcher.find_all/3`, and CLI search now include
+  explicitly passed `.exs` files, `.exs` globs, and `.exs` files found during
+  directory scans.
+- `ExAST.Patcher.find_all/3` now keeps walking after a match, so matching pipe
+  stages nested inside later matching pipe stages are reported.
+
 ## 0.12.1
 
 ### Changed
