@@ -222,7 +222,7 @@ defmodule Mix.Tasks.ExAst.SearchTest do
           Mix.Task.run("ex_ast.search", ["_", file, "--limit", "2"])
         end)
 
-      assert output =~ "1 match(es)"
+      assert output =~ "2 match(es)"
     end
 
     @tag :tmp_dir

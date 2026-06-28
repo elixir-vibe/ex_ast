@@ -541,6 +541,18 @@ defmodule ExAST.PatcherTest do
                Patcher.find_all(source, "Enum.map(_, _)")
     end
 
+    test "keeps each matching stage in a pipe chain" do
+      source = """
+      conn
+      |> assert_has(".a", checked: true)
+      |> assert_has(".b", checked: true)
+      """
+
+      assert [outer, inner] = Patcher.find_all(source, "assert_has(_, _, checked: _)")
+      assert outer.source =~ ~s|assert_has(".b", checked: true)|
+      assert inner.source =~ ~s|assert_has(".a", checked: true)|
+    end
+
     test "keeps explicit pipe patterns" do
       source = "Enum.reverse(values) |> hd()"
 

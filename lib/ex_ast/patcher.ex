@@ -308,7 +308,7 @@ defmodule ExAST.Patcher do
         match = %{node: node, range: range, captures: captures, ancestors: ancestors}
 
         zipper
-        |> Zipper.skip()
+        |> Zipper.next()
         |> collect_matches(compiled_pattern, signature, alias_env, [match | acc])
 
       :error ->
