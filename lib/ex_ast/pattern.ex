@@ -307,7 +307,7 @@ defmodule ExAST.Pattern do
   defp normalize(other, _alias_env), do: other
 
   @doc false
-  def collect_aliases(ast) do
+  def collect_aliases(ast, opts \\ []) do
     {_ast, aliases} =
       Macro.prewalk(ast, %{}, fn
         {:alias, _, args} = node, acc when is_list(args) ->
@@ -320,8 +320,77 @@ defmodule ExAST.Pattern do
           {node, acc}
       end)
 
-    aliases
+    if Keyword.get(opts, :expand_imports, false) do
+      expand_imports(aliases, ast)
+    else
+      aliases
+    end
   end
+
+  # `:all` (bare import) and `{:except, list}` only carry membership once we
+  # know the module's real exports, so resolve them here. Functions the module
+  # defines itself shadow the import and are excluded too.
+  defp expand_imports(aliases, ast) do
+    imports = Map.get(aliases, {__MODULE__, :imports}, [])
+
+    if Enum.any?(imports, &resolvable?/1) do
+      local = local_definitions(ast)
+      resolved = Enum.map(imports, &resolve_import(&1, local))
+      Map.put(aliases, {__MODULE__, :imports}, resolved)
+    else
+      aliases
+    end
+  end
+
+  defp resolvable?({_parts, :all}), do: true
+  defp resolvable?({_parts, {:except, _}}), do: true
+  defp resolvable?(_other), do: false
+
+  defp resolve_import({parts, :all}, local), do: {parts, resolve_exports(parts, local)}
+
+  defp resolve_import({parts, {:except, except}}, local),
+    do: {parts, resolve_exports(parts, MapSet.union(local, MapSet.new(except)))}
+
+  defp resolve_import(other, _local), do: other
+
+  # Drop excluded names (locals that shadow the import, plus any `:except`
+  # entries). Not loadable -> `:all`, i.e. no expansion.
+  defp resolve_exports(parts, excluded) do
+    mod = Module.concat(parts)
+
+    if Code.ensure_loaded?(mod) do
+      (mod.__info__(:functions) ++ mod.__info__(:macros))
+      |> Enum.reject(&MapSet.member?(excluded, &1))
+    else
+      :all
+    end
+  rescue
+    _ -> :all
+  end
+
+  defp local_definitions(ast) do
+    {_ast, defs} =
+      Macro.prewalk(ast, MapSet.new(), fn
+        {kind, _, [head | _]} = node, acc
+        when kind in [:def, :defp, :defmacro, :defmacrop] ->
+          {node, add_definition(acc, head)}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    defs
+  end
+
+  defp add_definition(acc, {:when, _, [call | _]}), do: add_definition(acc, call)
+
+  defp add_definition(acc, {name, _, args}) when is_atom(name) and is_list(args),
+    do: MapSet.put(acc, {name, length(args)})
+
+  defp add_definition(acc, {name, _, _}) when is_atom(name),
+    do: MapSet.put(acc, {name, 0})
+
+  defp add_definition(acc, _other), do: acc
 
   defp collect_import_directive([{:__aliases__, _, parts}], acc) when is_list(parts) do
     put_import(acc, parts, :all)
@@ -335,8 +404,23 @@ defmodule ExAST.Pattern do
 
   defp import_only(opts) do
     case opt_value(opts, :only) do
-      nil -> :all
+      nil -> import_except(opts)
       only_ast -> parse_only_list(only_ast)
+    end
+  end
+
+  # `except:` needs the module's full export list to subtract from, so like a
+  # bare import it stays unresolved until `expand_imports/2` (flag-gated).
+  defp import_except(opts) do
+    case opt_value(opts, :except) do
+      nil ->
+        :all
+
+      except_ast ->
+        case parse_only_list(except_ast) do
+          list when is_list(list) -> {:except, list}
+          _ -> :all
+        end
     end
   end
 

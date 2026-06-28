@@ -12,6 +12,9 @@ defmodule Mix.Tasks.ExAst.Search do
     * `--count` — only print the number of matches
     * `--limit n` — stop after returning this many matches
     * `--allow-broad` — allow unbounded broad searches like `_`
+    * `--expand-imports` — resolve bare `import Mod` (and `import Mod,
+      except: [...]`) to the module's real exports, so `map(a, b)` matches
+      `Mod.map(_, _)`. Requires `Mod` to be compiled and loadable.
     * `--inside 'pattern'` — only match inside ancestors matching this pattern
     * `--not-inside 'pattern'` — reject matches inside ancestors matching this pattern
     * `--parent 'pattern'` / `--not-parent 'pattern'` — filter by direct semantic parent
@@ -54,6 +57,7 @@ defmodule Mix.Tasks.ExAst.Search do
       mix ex_ast.search 'def name do ... end' --comment-inside TODO
       mix ex_ast.search 'def name do ... end' --comment-inside '/TODO|FIXME/'
       mix ex_ast.search '_' lib/ --limit 100
+      mix ex_ast.search 'Enum.map(_, _)' lib/ --expand-imports
   """
 
   use Mix.Task
@@ -72,7 +76,8 @@ defmodule Mix.Tasks.ExAst.Search do
             limit: :integer,
             allow_broad: :boolean,
             format: :string,
-            json: :boolean
+            json: :boolean,
+            expand_imports: :boolean
           ] ++
             SelectorOptions.switches()
       )
@@ -100,7 +105,7 @@ defmodule Mix.Tasks.ExAst.Search do
     search_opts =
       opts
       |> SelectorOptions.where_opts([:count, :limit, :allow_broad, :format, :json])
-      |> Keyword.merge(Keyword.take(opts, [:limit, :allow_broad]))
+      |> Keyword.merge(Keyword.take(opts, [:limit, :allow_broad, :expand_imports]))
 
     results = ExAST.search(paths, search_pattern, search_opts)
 
