@@ -287,6 +287,110 @@ defmodule ExAST.PatternTest do
       assert [_] = ExAST.Patcher.find_all(source, "Ecto.Query.from(_, _)")
     end
 
+    test "import :only only expands the listed functions" do
+      source = """
+      import Ecto.Query, only: [from: 2]
+
+      from(u in User, where: u.id == 1)
+      where(query, [u], u.id == 1)
+      """
+
+      # `from/2` is imported and resolves to its qualified name...
+      assert [_] = ExAST.Patcher.find_all(source, "Ecto.Query.from(_, _)")
+      # ...but `where/3` is not listed, so it stays a local call.
+      assert [] = ExAST.Patcher.find_all(source, "Ecto.Query.where(_, _, _)")
+      assert [_] = ExAST.Patcher.find_all(source, "where(_, _, _)")
+    end
+
+    test "import :only expands every listed arity of the same function" do
+      source = """
+      import Ecto.Query, only: [from: 1, from: 2]
+
+      from(u in User)
+      from(u in User, where: u.id == 1)
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "Ecto.Query.from(_)")
+      assert [_] = ExAST.Patcher.find_all(source, "Ecto.Query.from(_, _)")
+    end
+
+    test "import with options but no :only does not expand calls" do
+      source = """
+      import Ecto.Query, warn: false
+
+      from(u in User, where: u.id == 1)
+      """
+
+      assert [] = ExAST.Patcher.find_all(source, "Ecto.Query.from(_, _)")
+      assert [_] = ExAST.Patcher.find_all(source, "from(_, _)")
+    end
+
+    test "import only: :functions does not expand calls" do
+      source = """
+      import Ecto.Query, only: :functions
+
+      from(u in User, where: u.id == 1)
+      """
+
+      assert [] = ExAST.Patcher.find_all(source, "Ecto.Query.from(_, _)")
+      assert [_] = ExAST.Patcher.find_all(source, "from(_, _)")
+    end
+
+    test "malformed :only entries are ignored" do
+      # `:from` is not a `fun: arity` pair and `where: :two` has a non-integer
+      # arity, so neither expands.
+      source = """
+      import Ecto.Query, only: [:from, where: :two]
+
+      from(u in User, where: u.id == 1)
+      where(query, [u], u.id == 1)
+      """
+
+      assert [] = ExAST.Patcher.find_all(source, "Ecto.Query.from(_, _)")
+      assert [] = ExAST.Patcher.find_all(source, "Ecto.Query.where(_, _, _)")
+    end
+
+    test "a bare import does not break matching of unrelated calls" do
+      source = """
+      defmodule Demo do
+        import Enum
+
+        def add(a, b, c) do
+          String.upcase("x")
+          a + b + c
+        end
+      end
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "def add(_, _, _) do ... end")
+      assert [_] = ExAST.Patcher.find_all(source, "def _(_, _, _) do ... end")
+      assert [_] = ExAST.Patcher.find_all(source, "add(_, _, _)")
+      assert [_] = ExAST.Patcher.find_all(source, "String.upcase(_)")
+      assert [_] = ExAST.Patcher.find_all(source, "def _ do ... end")
+    end
+
+    test "a bare import does not break Logger.info matching (bug report repro)" do
+      source = """
+      defmodule Demo do
+        import Enum
+        require Logger
+        def run, do: Logger.info("hi")
+      end
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "Logger.info(...)")
+    end
+
+    test "import :only expands calls on a raw quoted AST" do
+      ast =
+        quote do
+          import Ecto.Query, only: [from: 2]
+          from(u in User, where: u.id == 1)
+        end
+
+      assert [_] = ExAST.Patcher.find_all(ast, "Ecto.Query.from(_, _)")
+    end
+
     test "alias" do
       assert {:ok, caps} = match!("alias MyApp.Accounts.User", "alias mod")
       assert Map.has_key?(caps, :mod)

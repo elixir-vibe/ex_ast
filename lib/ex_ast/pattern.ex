@@ -333,11 +333,39 @@ defmodule ExAST.Pattern do
   defp collect_import_directive(_args, acc), do: acc
 
   defp import_only(opts) do
-    case Keyword.get(opts, :only) do
-      only when is_list(only) -> only
-      _ -> :all
+    case opt_value(opts, :only) do
+      nil -> :all
+      only_ast -> parse_only_list(only_ast)
     end
   end
+
+  defp opt_value(opts, key) do
+    Enum.find_value(opts, fn
+      {{:__block__, _, [^key]}, value} -> value
+      {^key, value} -> value
+      _other -> nil
+    end)
+  end
+
+  defp parse_only_list(ast) do
+    case unwrap_block(ast) do
+      list when is_list(list) -> Enum.flat_map(list, &parse_only_entry/1)
+      # `only: :functions` / `:macros` carry no per-function membership.
+      _other -> :all
+    end
+  end
+
+  defp parse_only_entry({name_ast, arity_ast}) do
+    case {unwrap_block(name_ast), unwrap_block(arity_ast)} do
+      {name, arity} when is_atom(name) and is_integer(arity) -> [{name, arity}]
+      _ -> []
+    end
+  end
+
+  defp parse_only_entry(_other), do: []
+
+  defp unwrap_block({:__block__, _, [inner]}), do: inner
+  defp unwrap_block(other), do: other
 
   defp put_import(acc, parts, only) do
     imports = Map.get(acc, {__MODULE__, :imports}, [])
@@ -352,8 +380,10 @@ defmodule ExAST.Pattern do
     end)
   end
 
-  defp import_matches?(:all, _name, _arity), do: true
-  defp import_matches?(only, name, arity) when is_list(only), do: Keyword.get(only, name) == arity
+  # A bare `import Mod` gives no membership info, so expanding local calls to
+  # `Mod.fun` would corrupt unrelated calls — only `only:` imports are safe.
+  defp import_matches?(:all, _name, _arity), do: false
+  defp import_matches?(only, name, arity) when is_list(only), do: {name, arity} in only
   defp import_matches?(_only, _name, _arity), do: false
 
   defp import_expandable_call?(form) do
