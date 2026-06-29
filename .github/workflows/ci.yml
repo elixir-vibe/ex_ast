@@ -14,3 +14,4 @@ jobs:
     uses: elixir-vibe/actions/.github/workflows/elixir-ci.yml@v1
     with:
       restore-plt-cache: false
+      latest-command: rm -f _build/dev/dialyxir*.plt _build/test/dialyxir*.plt && mix ci
