@@ -15,7 +15,7 @@ Search files for AST pattern matches. PATH can be a file, directory, or glob.
 | `--count` | Print match count only |
 | `--limit N` | Stop after N matches |
 | `--allow-broad` | Allow patterns like `_` that match everything |
-| `--expand-imports` | Resolve bare `import Mod` (and `import Mod, except: [...]`) to the module's real exports, so `map(a, b)` matches `Mod.map(_, _)`. Requires `Mod` to be loadable |
+| `--expand-imports` | Resolve `import Mod` to `Mod`'s real exports, scoped per module, so `map(a, b)` matches `Mod.map(_, _)`. Requires `Mod` to be loadable |
 | `--format json` / `--json` | Print structured JSON output |
 | `--inside PATTERN` | Only match inside ancestors matching pattern |
 | `--not-inside PATTERN` | Reject matches inside ancestors matching pattern |
