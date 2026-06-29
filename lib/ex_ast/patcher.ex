@@ -59,10 +59,10 @@ defmodule ExAST.Patcher do
 
     * `:inside` — only match nodes nested within an ancestor matching this pattern
     * `:not_inside` — reject nodes nested within an ancestor matching this pattern
-    * `:expand_imports` — when `true`, resolve a bare `import Mod` (and the
-      complement of `import Mod, except: [...]`) to the module's real exports,
-      loaded via the BEAM, so calls like `map(a, b)` match `Mod.map(_, _)`.
-      Defaults to `false`; requires `Mod` to be loadable.
+    * `:expand_imports` — when `true`, resolve `import Mod` (including `except:`
+      and `only: :functions` / `:macros`) to `Mod`'s real exports, scoped to the
+      enclosing module, so `map(a, b)` matches `Mod.map(_, _)`. Defaults to
+      `false`; requires `Mod` to be loadable.
   """
   @spec find_all(String.t() | Zipper.t() | Macro.t(), Pattern.pattern() | Selector.t(), keyword()) ::
           [
@@ -305,10 +305,12 @@ defmodule ExAST.Patcher do
   end
 
   defp collect_match(zipper, node, compiled_pattern, signature, alias_env, acc) do
-    case Pattern.match_compiled(node, compiled_pattern, alias_env) do
+    {env, scoped_ancestors} = scope_env(alias_env, zipper)
+
+    case Pattern.match_compiled(node, compiled_pattern, env) do
       {:ok, captures} ->
         range = safe_range(node)
-        ancestors = collect_ancestors(zipper)
+        ancestors = scoped_ancestors || collect_ancestors(zipper)
         match = %{node: node, range: range, captures: captures, ancestors: ancestors}
 
         zipper
@@ -360,8 +362,15 @@ defmodule ExAST.Patcher do
          acc
        ) do
     node = Zipper.node(zipper)
-    normalized_node = Pattern.normalize_node(node, alias_env)
-    ancestors = if map_size(blocked) == 0, do: nil, else: collect_ancestors(zipper)
+    {env, scoped_ancestors} = scope_env(alias_env, zipper)
+    normalized_node = Pattern.normalize_node(node, env)
+
+    ancestors =
+      cond do
+        scoped_ancestors -> scoped_ancestors
+        map_size(blocked) == 0 -> nil
+        true -> collect_ancestors(zipper)
+      end
 
     context = %{
       ancestors: ancestors,
@@ -474,7 +483,7 @@ defmodule ExAST.Patcher do
       Macro.prewalk(ast, [], fn node, acc ->
         case extract_block_children(node) do
           nil -> {node, acc}
-          children -> {node, find_in_block(children, pattern_asts, ast, alias_env) ++ acc}
+          children -> {node, find_in_block(node, children, pattern_asts, ast, alias_env) ++ acc}
         end
       end)
 
@@ -497,8 +506,10 @@ defmodule ExAST.Patcher do
 
   defp extract_block_children(_), do: nil
 
-  defp find_in_block(children, pattern_asts, root_ast, alias_env) do
-    Pattern.match_sequences(children, pattern_asts, alias_env)
+  defp find_in_block(container, children, pattern_asts, root_ast, alias_env) do
+    env = scope_block_env(alias_env, container, root_ast)
+
+    Pattern.match_sequences(children, pattern_asts, env)
     |> Enum.map(fn {captures, range} ->
       matched_nodes = Enum.slice(children, range)
       first = List.first(matched_nodes)
@@ -969,6 +980,27 @@ defmodule ExAST.Patcher do
     case Zipper.up(zipper) do
       nil -> []
       parent -> [Zipper.node(parent) | collect_ancestors(parent)]
+    end
+  end
+
+  # Scope imports to the matched node's module so they don't leak into siblings.
+  # Returns the (maybe scoped) env plus the ancestors it computed, for reuse.
+  defp scope_env(alias_env, zipper) do
+    if Pattern.imports?(alias_env) do
+      ancestors = collect_ancestors(zipper)
+      {Pattern.scope_alias_env(alias_env, Pattern.module_path(ancestors)), ancestors}
+    else
+      {alias_env, nil}
+    end
+  end
+
+  # Same, for sequence matching, where the module comes from the block container.
+  defp scope_block_env(alias_env, container, root_ast) do
+    if Pattern.imports?(alias_env) do
+      ancestors = [container | collect_ancestors_for_node(container, root_ast)]
+      Pattern.scope_alias_env(alias_env, Pattern.module_path(ancestors))
+    else
+      alias_env
     end
   end
 
