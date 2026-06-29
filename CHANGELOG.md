@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.5
+
+### Fixed
+
+- Bare imports no longer rewrite every local call while matching canonical remote-call patterns.
+- Explicit multi-arity imports such as `import Foo, only: [bar: 1, bar: 2]` now resolve all listed arities.
+
 ## 0.12.4
 
 ### Added
