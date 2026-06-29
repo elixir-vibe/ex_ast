@@ -305,37 +305,159 @@ defmodule ExAST.Pattern do
 
   defp normalize(other, _alias_env), do: other
 
+  @imports_key {__MODULE__, :imports}
+  @locals_key {__MODULE__, :locals}
+  @scope_key {__MODULE__, :scope}
+
   @doc false
-  def collect_aliases(ast) do
-    {_ast, aliases} =
-      Macro.prewalk(ast, %{}, fn
-        {:alias, _, args} = node, acc when is_list(args) ->
-          {node, collect_alias_directive(args, acc)}
+  def collect_aliases(ast, opts \\ []) do
+    {_ast, {aliases, _stack, locals}} =
+      Macro.traverse(ast, {%{}, [], %{}}, &collect_pre/2, &collect_post/2)
 
-        {:import, _, args} = node, acc when is_list(args) ->
-          {node, collect_import_directive(args, acc)}
-
-        node, acc ->
-          {node, acc}
-      end)
-
-    aliases
+    if Keyword.get(opts, :expand_imports, false) do
+      expand_imports(aliases, locals)
+    else
+      aliases
+    end
   end
 
-  defp collect_import_directive([{:__aliases__, _, parts}], acc) when is_list(parts) do
-    put_import(acc, parts, :all)
+  # Track the enclosing module path so imports/locals stay scoped per module.
+  defp collect_pre({:defmodule, _, [name | _]} = node, {aliases, stack, locals}) do
+    {node, {aliases, [module_parts(name) | stack], locals}}
   end
 
-  defp collect_import_directive([{:__aliases__, _, parts}, opts], acc) when is_list(parts) do
-    put_import(acc, parts, import_only(opts))
+  defp collect_pre({:alias, _, args} = node, {aliases, stack, locals}) when is_list(args) do
+    {node, {collect_alias_directive(args, aliases), stack, locals}}
   end
 
-  defp collect_import_directive(_args, acc), do: acc
+  defp collect_pre({:import, _, args} = node, {aliases, stack, locals}) when is_list(args) do
+    {node, {collect_import_directive(args, aliases, current_path(stack)), stack, locals}}
+  end
+
+  defp collect_pre({kind, _, [head | _]} = node, {aliases, stack, locals})
+       when kind in [:def, :defp, :defmacro, :defmacrop] do
+    {node, {aliases, stack, add_local(locals, current_path(stack), head)}}
+  end
+
+  defp collect_pre(node, acc), do: {node, acc}
+
+  defp collect_post({:defmodule, _, _} = node, {aliases, [_ | stack], locals}) do
+    {node, {aliases, stack, locals}}
+  end
+
+  defp collect_post(node, acc), do: {node, acc}
+
+  defp module_parts({:__aliases__, _, parts}) when is_list(parts),
+    do: Enum.filter(parts, &is_atom/1)
+
+  defp module_parts(_other), do: []
+
+  defp current_path(stack), do: stack |> Enum.reverse() |> List.flatten()
+
+  defp add_local(locals, path, head) do
+    Map.update(locals, path, add_definition(MapSet.new(), head), &add_definition(&1, head))
+  end
+
+  # Resolve membership from the module's real exports. Local shadowing is left
+  # to match time since it depends on the call site, not the import.
+  defp expand_imports(aliases, locals) do
+    imports = Map.get(aliases, @imports_key, [])
+
+    if Enum.any?(imports, fn {_path, _parts, only} -> resolvable?(only) end) do
+      aliases
+      |> Map.put(@imports_key, Enum.map(imports, &resolve_import/1))
+      |> Map.put(@locals_key, locals)
+    else
+      aliases
+    end
+  end
+
+  defp resolvable?(:all), do: true
+  defp resolvable?(:functions), do: true
+  defp resolvable?(:macros), do: true
+  defp resolvable?({:except, _}), do: true
+  defp resolvable?(_other), do: false
+
+  defp resolve_import({path, parts, only}) do
+    if resolvable?(only) do
+      {path, parts, resolve_only(parts, only)}
+    else
+      {path, parts, only}
+    end
+  end
+
+  defp resolve_only(parts, {:except, except}),
+    do: resolve_exports(parts, :all, MapSet.new(except))
+
+  defp resolve_only(parts, kind), do: resolve_exports(parts, kind, MapSet.new())
+
+  # Exports of the requested kind, minus `:except` names. Not loadable -> `:all`.
+  defp resolve_exports(parts, kind, excluded) do
+    mod = Module.concat(parts)
+
+    if Code.ensure_loaded?(mod) do
+      mod
+      |> module_exports(kind)
+      |> Enum.reject(&MapSet.member?(excluded, &1))
+    else
+      :all
+    end
+  rescue
+    _ -> :all
+  end
+
+  defp module_exports(mod, :functions), do: mod.__info__(:functions)
+  defp module_exports(mod, :macros), do: mod.__info__(:macros)
+  defp module_exports(mod, :all), do: mod.__info__(:functions) ++ mod.__info__(:macros)
+
+  defp add_definition(acc, {:when, _, [call | _]}), do: add_definition(acc, call)
+
+  defp add_definition(acc, {name, _, args}) when is_atom(name) and is_list(args),
+    do: MapSet.put(acc, {name, length(args)})
+
+  defp add_definition(acc, {name, _, _}) when is_atom(name),
+    do: MapSet.put(acc, {name, 0})
+
+  defp add_definition(acc, _other), do: acc
+
+  defp collect_import_directive([{:__aliases__, _, parts}], acc, path) when is_list(parts) do
+    put_import(acc, path, parts, :all)
+  end
+
+  defp collect_import_directive([{:__aliases__, _, parts}, opts], acc, path)
+       when is_list(parts) do
+    put_import(acc, path, parts, import_only(opts))
+  end
+
+  defp collect_import_directive(_args, acc, _path), do: acc
 
   defp import_only(opts) do
     case opt_value(opts, :only) do
-      nil -> :all
-      only_ast -> parse_only_list(only_ast)
+      nil -> import_except(opts)
+      only_ast -> only_kind(only_ast)
+    end
+  end
+
+  # Keep `:functions` / `:macros` so expansion resolves against just that kind.
+  defp only_kind(ast) do
+    case unwrap_block(ast) do
+      :functions -> :functions
+      :macros -> :macros
+      _other -> parse_only_list(ast)
+    end
+  end
+
+  # `except:` stays unresolved until `expand_imports/2`; it needs the full export list.
+  defp import_except(opts) do
+    case opt_value(opts, :except) do
+      nil ->
+        :all
+
+      except_ast ->
+        case parse_only_list(except_ast) do
+          list when is_list(list) -> {:except, list}
+          _ -> :all
+        end
     end
   end
 
@@ -350,7 +472,6 @@ defmodule ExAST.Pattern do
   defp parse_only_list(ast) do
     case unwrap_block(ast) do
       list when is_list(list) -> Enum.flat_map(list, &parse_only_entry/1)
-      # `only: :functions` / `:macros` carry no per-function membership.
       _other -> :all
     end
   end
@@ -367,21 +488,61 @@ defmodule ExAST.Pattern do
   defp unwrap_block({:__block__, _, [inner]}), do: inner
   defp unwrap_block(other), do: other
 
-  defp put_import(acc, parts, only) do
-    imports = Map.get(acc, {__MODULE__, :imports}, [])
-    Map.put(acc, {__MODULE__, :imports}, [{parts, only} | imports])
+  defp put_import(acc, path, parts, only) do
+    imports = Map.get(acc, @imports_key, [])
+    Map.put(acc, @imports_key, [{path, parts, only} | imports])
   end
 
-  defp imported_module(alias_env, name, arity) do
-    alias_env
-    |> Map.get({__MODULE__, :imports}, [])
-    |> Enum.find_value(fn {parts, only} ->
-      if import_matches?(only, name, arity), do: parts
+  @doc false
+  @spec imports?(%{optional(term()) => term()}) :: boolean()
+  def imports?(alias_env), do: Map.has_key?(alias_env, @imports_key)
+
+  @doc false
+  @spec scope_alias_env(%{optional(term()) => term()}, [atom()]) :: %{optional(term()) => term()}
+  def scope_alias_env(alias_env, module_path) do
+    Map.put(alias_env, @scope_key, module_path)
+  end
+
+  @doc false
+  @spec module_path([Macro.t()]) :: [atom()]
+  def module_path(ancestors) do
+    ancestors
+    |> Enum.reverse()
+    |> Enum.flat_map(fn
+      {:defmodule, _, [name | _]} -> module_parts(name)
+      _other -> []
     end)
   end
 
-  # A bare `import Mod` gives no membership info, so expanding local calls to
-  # `Mod.fun` would corrupt unrelated calls — only `only:` imports are safe.
+  defp imported_module(alias_env, name, arity) do
+    scope = Map.get(alias_env, @scope_key, :all)
+
+    if not locally_shadowed?(alias_env, scope, name, arity) do
+      alias_env
+      |> Map.get(@imports_key, [])
+      |> Enum.find_value(&matching_import(&1, scope, name, arity))
+    end
+  end
+
+  defp matching_import({path, parts, only}, scope, name, arity) do
+    if in_scope?(scope, path) and import_matches?(only, name, arity), do: parts
+  end
+
+  # A local def in the call site's own module shadows the import.
+  defp locally_shadowed?(_alias_env, :all, _name, _arity), do: false
+
+  defp locally_shadowed?(alias_env, scope, name, arity) do
+    alias_env
+    |> Map.get(@locals_key, %{})
+    |> Map.get(scope, MapSet.new())
+    |> MapSet.member?({name, arity})
+  end
+
+  # `:all` (low-level `match/3`) is file-global; a module path scopes to descendants.
+  defp in_scope?(:all, _path), do: true
+  defp in_scope?(module_path, path), do: List.starts_with?(module_path, path)
+
+  # An unresolved `:all` import (bare, unexpanded) has no membership, so it never matches.
   defp import_matches?(:all, _name, _arity), do: false
   defp import_matches?(only, name, arity) when is_list(only), do: {name, arity} in only
   defp import_matches?(_only, _name, _arity), do: false
