@@ -27,7 +27,7 @@ defmodule ExAST.Index.TermsTest do
     test "indexes small integer literals" do
       terms =
         quote do
-          length(items) == 0 and Enum.at(items, -1) == 1
+          Enum.at(items, 0) == 1 and Enum.at(items, -1) == 1
         end
         |> Terms.from_ast()
 
@@ -42,7 +42,7 @@ defmodule ExAST.Index.TermsTest do
         quote do
           Keyword.get(opts, :name, nil)
           Map.put(map, key, true)
-          length(items) == 0
+          Kernel.+(value, 0) == 0
         end
         |> Terms.from_ast()
 
@@ -62,7 +62,7 @@ defmodule ExAST.Index.TermsTest do
             _ -> false
           end
 
-          length(_) == 0
+          Kernel.+(_, 0) == 0
         end
         |> Terms.from_pattern()
 
