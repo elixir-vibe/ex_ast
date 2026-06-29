@@ -12,3 +12,5 @@ permissions:
 jobs:
   ci:
     uses: elixir-vibe/actions/.github/workflows/elixir-ci.yml@v1
+    with:
+      restore-plt-cache: false
