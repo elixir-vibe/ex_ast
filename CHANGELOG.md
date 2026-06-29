@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.12.4
+
+### Added
+
+- Index explicit `nil` and small integer literals as candidate terms.
+- Index direct call argument literal terms, including boolean argument-class terms for `true`/`false`.
+- Infer boolean call-argument candidate terms from selector capture predicates that only accept boolean literal captures.
+
+### Fixed
+
+- Selector predicates with metadata-only `nil` payloads no longer contribute `atom:nil` candidate terms.
+
 ## 0.12.3
 
 ### Fixed

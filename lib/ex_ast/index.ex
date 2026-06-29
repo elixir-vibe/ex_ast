@@ -98,6 +98,7 @@ defmodule ExAST.Index do
     |> Enum.reduce(MapSet.new(), &MapSet.union/2)
   end
 
+  defp predicate_terms(%Predicate{pattern: nil}), do: MapSet.new()
   defp predicate_terms(%Predicate{pattern: %CommentMatcher{}}), do: MapSet.new()
   defp predicate_terms(%Predicate{pattern: %Regex{}}), do: MapSet.new()
   defp predicate_terms(%Predicate{pattern: pattern}), do: Terms.from_pattern(pattern)
@@ -134,11 +135,21 @@ defmodule ExAST.Index do
 
   defp inferred_terms(%Selector{steps: [self: {op, _meta, [left, right]}], filters: filters})
        when is_atom(op) do
-    if equality_capture_guard?(filters, left, right) do
-      MapSet.new(["call.local.same_args:#{op}/2"])
-    else
-      MapSet.new()
-    end
+    terms =
+      if equality_capture_guard?(filters, left, right) do
+        ["call.local.same_args:#{op}/2"]
+      else
+        []
+      end
+
+    MapSet.new(terms)
+  end
+
+  defp inferred_terms(%Selector{steps: [self: step], filters: filters}) do
+    step
+    |> call_capture_args()
+    |> inferred_capture_arg_terms(filters)
+    |> MapSet.new()
   end
 
   defp inferred_terms(_selector), do: MapSet.new()
@@ -169,11 +180,79 @@ defmodule ExAST.Index do
 
   defp same_capture_predicate?(_predicate, _left, _right), do: false
 
+  defp inferred_capture_arg_terms([], _filters), do: []
+
+  defp inferred_capture_arg_terms(capture_args, filters) do
+    filters
+    |> Enum.flat_map(fn
+      %Predicate{relation: :captures, pattern: fun, negated?: false} when is_function(fun, 1) ->
+        Enum.flat_map(capture_args, &boolean_capture_arg_terms(&1, capture_args, fun))
+
+      _predicate ->
+        []
+    end)
+  end
+
+  defp boolean_capture_arg_terms({capture, call, position}, capture_args, fun) do
+    true_captures = captures_for(capture_args, capture, true)
+    false_captures = captures_for(capture_args, capture, false)
+    placeholder_captures = captures_for(capture_args, capture, placeholder_ast(capture))
+
+    if safe_capture_predicate?(fun, true_captures) and
+         safe_capture_predicate?(fun, false_captures) and
+         not safe_capture_predicate?(fun, placeholder_captures) do
+      ["call.arg:#{call}:#{position}:atom:boolean"]
+    else
+      []
+    end
+  end
+
+  defp captures_for(capture_args, target, target_value) do
+    Map.new(capture_args, fn {capture, _call, _position} ->
+      value = if capture == target, do: target_value, else: placeholder_ast(capture)
+      {capture, value}
+    end)
+  end
+
+  defp placeholder_ast(capture), do: {capture, [], nil}
+
+  defp call_capture_args({{:., _dot_meta, [module_ast, fun]}, _meta, args})
+       when is_atom(fun) and is_list(args) do
+    if literal_alias?(module_ast) do
+      call = "#{alias_name(module_ast)}.#{fun}/#{length(args)}"
+      capture_args(call, args)
+    else
+      []
+    end
+  end
+
+  defp call_capture_args({name, _meta, args}) when is_atom(name) and is_list(args) do
+    capture_args("#{name}/#{length(args)}", args)
+  end
+
+  defp call_capture_args(_step), do: []
+
+  defp capture_args(call, args) do
+    args
+    |> Enum.with_index(1)
+    |> Enum.flat_map(fn {arg, position} ->
+      case capture_name(arg) do
+        nil -> []
+        capture -> [{capture, call, position}]
+      end
+    end)
+  end
+
   defp safe_capture_predicate?(fun, captures) do
     fun.(captures) == true
   rescue
     _ -> false
   end
+
+  defp literal_alias?({:__aliases__, _, parts}), do: Enum.all?(parts, &is_atom/1)
+  defp literal_alias?(_ast), do: false
+
+  defp alias_name({:__aliases__, _, parts}), do: Enum.join(parts, ".")
 
   defp capture_name({name, _meta, nil}) when is_atom(name), do: name
   defp capture_name({name, _meta, context}) when is_atom(name) and is_atom(context), do: name

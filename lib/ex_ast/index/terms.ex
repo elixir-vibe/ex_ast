@@ -35,10 +35,12 @@ defmodule ExAST.Index.Terms do
   def from_pattern(pattern), do: pattern |> to_quoted() |> collect(:pattern) |> MapSet.new()
 
   @spec signal(String.t()) :: signal()
-  def signal("atom:" <> atom) when atom in ["do", "nil", "ok", "error"],
+  def signal("atom:" <> atom) when atom in ["do", "ok", "error"],
     do: :low
 
-  def signal("atom:" <> atom) when atom in ["true", "false"], do: :normal
+  def signal("atom:" <> atom) when atom in ["nil", "true", "false"], do: :normal
+  def signal("integer:" <> _integer), do: :normal
+  def signal("call.arg:" <> _argument_literal), do: :normal
 
   def signal("node:call"), do: :low
   def signal("node:local_call"), do: :low
@@ -68,7 +70,7 @@ defmodule ExAST.Index.Terms do
 
   defp collect(ast, mode) do
     {_ast, terms} = Macro.prewalk(ast, [], &visit(&1, &2, mode))
-    Enum.uniq(terms)
+    Enum.uniq(literal_terms(ast) ++ terms)
   end
 
   defp visit({:defmodule, _meta, [module_ast, body]} = node, terms, mode) do
@@ -155,7 +157,12 @@ defmodule ExAST.Index.Terms do
     terms =
       if literal_alias?(module_ast) do
         module = alias_name(module_ast)
-        ["call.module:#{module}", "call.remote:#{module}.#{fun}/#{arity}" | terms]
+        remote = "#{module}.#{fun}/#{arity}"
+
+        [
+          "call.module:#{module}",
+          "call.remote:#{remote}" | arg_literal_terms(remote, args, terms)
+        ]
       else
         terms
       end
@@ -169,13 +176,15 @@ defmodule ExAST.Index.Terms do
     else
       arity = length(args)
 
+      local = "#{name}/#{arity}"
+
       {node,
        [
          "node:call",
          "node:local_call",
-         "call.local:#{name}/#{arity}",
+         "call.local:#{local}",
          "call.function:#{name}",
-         "call.arity:#{arity}" | same_arg_terms(name, args, terms)
+         "call.arity:#{arity}" | arg_literal_terms(local, args, same_arg_terms(name, args, terms))
        ]}
     end
   end
@@ -185,6 +194,73 @@ defmodule ExAST.Index.Terms do
   end
 
   defp visit(node, terms, _mode), do: {node, terms}
+
+  defp literal_terms(nil), do: ["atom:nil"]
+  defp literal_terms(true), do: ["atom:true"]
+  defp literal_terms(false), do: ["atom:false"]
+
+  defp literal_terms(integer) when is_integer(integer) and integer in -10..10,
+    do: ["integer:#{integer}"]
+
+  defp literal_terms(integer) when is_integer(integer), do: []
+
+  defp literal_terms({:-, _meta, [integer]}) when is_integer(integer) and integer in 1..10,
+    do: ["integer:-#{integer}"]
+
+  defp literal_terms({name, meta, context})
+       when is_atom(name) and is_list(meta) and (is_atom(context) or is_nil(context)),
+       do: []
+
+  defp literal_terms({{:., _dot_meta, [module_ast, _fun]}, _meta, args}) when is_list(args) do
+    literal_terms(module_ast) ++ literal_terms(args)
+  end
+
+  defp literal_terms({:%, _meta, [struct_ast, map_ast]}) do
+    literal_terms(struct_ast) ++ literal_terms(map_ast)
+  end
+
+  defp literal_terms({:%{}, _meta, fields}) when is_list(fields), do: literal_terms(fields)
+  defp literal_terms({:__aliases__, _meta, _parts}), do: []
+
+  defp literal_terms({_form, meta, args}) when is_list(meta) and is_list(args),
+    do: literal_terms(args)
+
+  defp literal_terms({left, right}), do: literal_terms(left) ++ literal_terms(right)
+  defp literal_terms(list) when is_list(list), do: Enum.flat_map(list, &literal_terms/1)
+  defp literal_terms(_node), do: []
+
+  defp arg_literal_terms(call, args, terms) do
+    args
+    |> Enum.with_index(1)
+    |> Enum.flat_map(fn {arg, position} ->
+      arg
+      |> direct_literal_terms()
+      |> Enum.flat_map(&argument_literal_terms(call, position, &1))
+    end)
+    |> Kernel.++(terms)
+  end
+
+  defp direct_literal_terms(nil), do: ["atom:nil"]
+  defp direct_literal_terms(true), do: ["atom:true"]
+  defp direct_literal_terms(false), do: ["atom:false"]
+
+  defp direct_literal_terms(integer) when is_integer(integer) and integer in -10..10,
+    do: ["integer:#{integer}"]
+
+  defp direct_literal_terms({:-, _meta, [integer]}) when is_integer(integer) and integer in 1..10,
+    do: ["integer:-#{integer}"]
+
+  defp direct_literal_terms(_node), do: []
+
+  defp argument_literal_terms(call, position, "atom:true") do
+    ["call.arg:#{call}:#{position}:atom:true", "call.arg:#{call}:#{position}:atom:boolean"]
+  end
+
+  defp argument_literal_terms(call, position, "atom:false") do
+    ["call.arg:#{call}:#{position}:atom:false", "call.arg:#{call}:#{position}:atom:boolean"]
+  end
+
+  defp argument_literal_terms(call, position, term), do: ["call.arg:#{call}:#{position}:#{term}"]
 
   defp same_arg_terms(name, [left, right], terms) do
     if normalized(left) == normalized(right) do
