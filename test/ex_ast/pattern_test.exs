@@ -295,9 +295,7 @@ defmodule ExAST.PatternTest do
       where(query, [u], u.id == 1)
       """
 
-      # `from/2` is imported and resolves to its qualified name...
       assert [_] = ExAST.Patcher.find_all(source, "Ecto.Query.from(_, _)")
-      # ...but `where/3` is not listed, so it stays a local call.
       assert [] = ExAST.Patcher.find_all(source, "Ecto.Query.where(_, _, _)")
       assert [_] = ExAST.Patcher.find_all(source, "where(_, _, _)")
     end
@@ -337,8 +335,6 @@ defmodule ExAST.PatternTest do
     end
 
     test "malformed :only entries are ignored" do
-      # `:from` is not a `fun: arity` pair and `where: :two` has a non-integer
-      # arity, so neither expands.
       source = """
       import Ecto.Query, only: [:from, where: :two]
 
