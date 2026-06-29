@@ -517,13 +517,15 @@ defmodule ExAST.Pattern do
   defp imported_module(alias_env, name, arity) do
     scope = Map.get(alias_env, @scope_key, :all)
 
-    unless locally_shadowed?(alias_env, scope, name, arity) do
+    if not locally_shadowed?(alias_env, scope, name, arity) do
       alias_env
       |> Map.get(@imports_key, [])
-      |> Enum.find_value(fn {path, parts, only} ->
-        if in_scope?(scope, path) and import_matches?(only, name, arity), do: parts
-      end)
+      |> Enum.find_value(&matching_import(&1, scope, name, arity))
     end
+  end
+
+  defp matching_import({path, parts, only}, scope, name, arity) do
+    if in_scope?(scope, path) and import_matches?(only, name, arity), do: parts
   end
 
   # A local def in the call site's own module shadows the import.
