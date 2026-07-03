@@ -1,10 +1,12 @@
 # Changelog
 
-## 0.12.5
+## 0.12.6
 
 ### Added
 
 - Added tagged identifier support for atom-free indexed ASTs, including pattern matching, candidate terms, and symbol extraction.
+
+## 0.12.5
 
 ### Fixed
 
