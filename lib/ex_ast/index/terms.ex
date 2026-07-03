@@ -6,6 +6,8 @@ defmodule ExAST.Index.Terms do
   for ExAST verification.
   """
 
+  alias ExAST.Ident
+
   @type mode :: :source | :pattern
   @type signal :: :high | :normal | :low
 
@@ -102,9 +104,14 @@ defmodule ExAST.Index.Terms do
     {node, terms}
   end
 
-  defp visit({:@, _meta, [{name, _, args}]} = node, terms, _mode) when is_atom(name) do
-    arity = if is_list(args), do: length(args), else: 0
-    {node, ["node:attribute", "attribute:#{name}", "attribute.arity:#{arity}" | terms]}
+  defp visit({:@, _meta, [{name, _, args}]} = node, terms, _mode) do
+    if identifier?(name) do
+      name = identifier_name(name)
+      arity = if is_list(args), do: length(args), else: 0
+      {node, ["node:attribute", "attribute:#{name}", "attribute.arity:#{arity}" | terms]}
+    else
+      {node, terms}
+    end
   end
 
   defp visit({:%, _meta, [struct_ast, {:%{}, _, fields}]} = node, terms, _mode)
@@ -120,8 +127,8 @@ defmodule ExAST.Index.Terms do
 
     field_terms =
       Enum.flat_map(fields, fn
-        {key, _value} when is_atom(key) -> ["struct.field:#{key}"]
-        _ -> []
+        {key, _value} ->
+          if identifier?(key), do: ["struct.field:#{identifier_name(key)}"], else: []
       end)
 
     {node, field_terms ++ terms}
@@ -130,50 +137,55 @@ defmodule ExAST.Index.Terms do
   defp visit({:%{}, _meta, fields} = node, terms, _mode) when is_list(fields) do
     key_terms =
       Enum.flat_map(fields, fn
-        {key, _value} when is_atom(key) -> ["map.key:#{key}"]
-        _ -> []
+        {key, _value} -> if identifier?(key), do: ["map.key:#{identifier_name(key)}"], else: []
       end)
 
     {node, ["node:map" | key_terms] ++ terms}
   end
 
-  defp visit({:__aliases__, _meta, parts} = node, terms, _mode) when is_list(parts) do
+  defp visit({:__aliases__, _meta, _parts} = node, terms, _mode) do
     if literal_alias?(node),
-      do: {node, ["alias:#{Enum.join(parts, ".")}" | terms]},
+      do: {node, ["alias:#{alias_name(node)}" | terms]},
       else: {node, terms}
   end
 
   defp visit({{:., _dot_meta, [module_ast, fun]}, _meta, args} = node, terms, _mode)
-       when is_atom(fun) and is_list(args) do
-    arity = length(args)
+       when is_list(args) do
+    if identifier?(fun) do
+      fun = identifier_name(fun)
+      arity = length(args)
 
-    terms = [
-      "node:call",
-      "node:remote_call",
-      "call.function:#{fun}",
-      "call.arity:#{arity}" | terms
-    ]
+      terms = [
+        "node:call",
+        "node:remote_call",
+        "call.function:#{fun}",
+        "call.arity:#{arity}" | terms
+      ]
 
-    terms =
-      if literal_alias?(module_ast) do
-        module = alias_name(module_ast)
-        remote = "#{module}.#{fun}/#{arity}"
+      terms =
+        if literal_alias?(module_ast) do
+          module = alias_name(module_ast)
+          remote = "#{module}.#{fun}/#{arity}"
 
-        [
-          "call.module:#{module}",
-          "call.remote:#{remote}" | arg_literal_terms(remote, args, terms)
-        ]
-      else
-        terms
-      end
+          [
+            "call.module:#{module}",
+            "call.remote:#{remote}" | arg_literal_terms(remote, args, terms)
+          ]
+        else
+          terms
+        end
 
-    {node, terms}
-  end
-
-  defp visit({name, _meta, args} = node, terms, mode) when is_atom(name) and is_list(args) do
-    if synthetic_call?(name) or pattern_capture_call?(node, mode) do
       {node, terms}
     else
+      {node, terms}
+    end
+  end
+
+  defp visit({name, _meta, args} = node, terms, mode) when is_list(args) do
+    if not identifier?(name) or synthetic_call?(name) or pattern_capture_call?(node, mode) do
+      {node, terms}
+    else
+      name = identifier_name(name)
       arity = length(args)
 
       local = "#{name}/#{arity}"
@@ -193,6 +205,10 @@ defmodule ExAST.Index.Terms do
     {atom, ["atom:#{atom}" | terms]}
   end
 
+  defp visit({:__exograph_ident__, name} = ident, terms, _mode) when is_binary(name) do
+    {ident, ["atom:#{name}" | terms]}
+  end
+
   defp visit(node, terms, _mode), do: {node, terms}
 
   defp literal_terms(nil), do: ["atom:nil"]
@@ -203,6 +219,8 @@ defmodule ExAST.Index.Terms do
     do: ["integer:#{integer}"]
 
   defp literal_terms(integer) when is_integer(integer), do: []
+
+  defp literal_terms({:__exograph_ident__, name}) when is_binary(name), do: ["atom:#{name}"]
 
   defp literal_terms({:-, _meta, [integer]}) when is_integer(integer) and integer in 1..10,
     do: ["integer:-#{integer}"]
@@ -250,6 +268,9 @@ defmodule ExAST.Index.Terms do
   defp direct_literal_terms({:-, _meta, [integer]}) when is_integer(integer) and integer in 1..10,
     do: ["integer:-#{integer}"]
 
+  defp direct_literal_terms({:__exograph_ident__, name}) when is_binary(name),
+    do: ["atom:#{name}"]
+
   defp direct_literal_terms(_node), do: []
 
   defp argument_literal_terms(call, position, "atom:true") do
@@ -286,14 +307,16 @@ defmodule ExAST.Index.Terms do
 
   defp function_head({:when, _, [head | _guards]}, mode), do: function_head(head, mode)
 
-  defp function_head({name, _, nil}, mode) when is_atom(name) do
-    if pattern_capture_call?({name, [], nil}, mode), do: :unknown, else: {:ok, name, 0}
+  defp function_head({name, _, nil}, mode) do
+    if identifier?(name) and not pattern_capture_call?({name, [], nil}, mode),
+      do: {:ok, identifier_name(name), 0},
+      else: :unknown
   end
 
-  defp function_head({name, _, args}, mode) when is_atom(name) and is_list(args) do
-    if pattern_capture_call?({name, [], args}, mode),
-      do: :unknown,
-      else: {:ok, name, length(args)}
+  defp function_head({name, _, args}, mode) when is_list(args) do
+    if identifier?(name) and not pattern_capture_call?({name, [], args}, mode),
+      do: {:ok, identifier_name(name), length(args)},
+      else: :unknown
   end
 
   defp function_head(_head, _mode), do: :unknown
@@ -304,16 +327,23 @@ defmodule ExAST.Index.Terms do
   defp pattern_capture_call?({_name, _meta, args}, :pattern), do: args == nil
   defp pattern_capture_call?(_node, _mode), do: false
 
-  defp literal_alias?({:__aliases__, _, parts}), do: Enum.all?(parts, &is_atom/1)
+  defp literal_alias?({:__aliases__, _, parts}), do: Enum.all?(parts, &identifier?/1)
   defp literal_alias?(_ast), do: false
 
-  defp alias_name({:__aliases__, _, parts}), do: Enum.join(parts, ".")
+  defp alias_name({:__aliases__, _, parts}),
+    do: parts |> Enum.map(&identifier_name/1) |> Enum.join(".")
+
+  defp identifier?(name), do: is_atom(name) or Ident.ident?(name)
+
+  defp identifier_name(name) when is_atom(name), do: Atom.to_string(name)
+  defp identifier_name(name), do: Ident.name(name)
 
   defp visibility(:defp), do: :private
   defp visibility(:defmacrop), do: :private
   defp visibility(_form), do: :public
 
-  defp synthetic_call?(name), do: name in [:__aliases__, :..., :_]
+  defp synthetic_call?(name) when is_atom(name), do: name in [:__aliases__, :..., :_]
+  defp synthetic_call?(_name), do: false
 
   defp capture_name?(:_), do: true
 

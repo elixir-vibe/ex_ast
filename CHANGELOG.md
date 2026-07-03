@@ -2,6 +2,10 @@
 
 ## 0.12.5
 
+### Added
+
+- Added tagged identifier support for atom-free indexed ASTs, including pattern matching, candidate terms, and symbol extraction.
+
 ### Fixed
 
 - Bare imports no longer rewrite every local call while matching canonical remote-call patterns.

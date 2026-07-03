@@ -3,6 +3,7 @@ defmodule ExAST.Symbols do
   Extracts lightweight definition and reference facts from Elixir source or AST.
   """
 
+  alias ExAST.Ident
   alias ExAST.Symbol.{Definition, Reference}
 
   @definition_forms [:def, :defp, :defmacro, :defmacrop]
@@ -143,7 +144,7 @@ defmodule ExAST.Symbols do
          %Definition{
            kind: form,
            module: module,
-           name: Atom.to_string(name),
+           name: identifier_name(name),
            arity: arity,
            qualified_name: qualified_name(module, name, arity),
            mfa: mfa(module, name, arity),
@@ -172,7 +173,7 @@ defmodule ExAST.Symbols do
          %Definition{
            kind: :defdelegate,
            module: module,
-           name: Atom.to_string(name),
+           name: identifier_name(name),
            arity: arity,
            qualified_name: qualified_name(module, name, arity),
            mfa: mfa(module, name, arity),
@@ -195,22 +196,26 @@ defmodule ExAST.Symbols do
     callback_definition(node, meta, modules, :defmacrocallback, head)
   end
 
-  defp definition_from_node({:@, meta, [{name, _, _args}]} = node, modules) when is_atom(name) do
-    module = List.first(modules)
+  defp definition_from_node({:@, meta, [{name, _, _args}]} = node, modules) do
+    if identifier?(name) do
+      module = List.first(modules)
 
-    {:definition,
-     %Definition{
-       kind: :attribute,
-       module: module,
-       name: Atom.to_string(name),
-       arity: nil,
-       qualified_name: attribute_name(module, name),
-       mfa: nil,
-       visibility: nil,
-       line: meta[:line],
-       column: meta[:column],
-       node: node
-     }}
+      {:definition,
+       %Definition{
+         kind: :attribute,
+         module: module,
+         name: identifier_name(name),
+         arity: nil,
+         qualified_name: attribute_name(module, name),
+         mfa: nil,
+         visibility: nil,
+         line: meta[:line],
+         column: meta[:column],
+         node: node
+       }}
+    else
+      :none
+    end
   end
 
   defp definition_from_node(_node, _modules), do: :none
@@ -224,7 +229,7 @@ defmodule ExAST.Symbols do
          %Definition{
            kind: kind,
            module: module,
-           name: Atom.to_string(name),
+           name: identifier_name(name),
            arity: arity,
            qualified_name: qualified_name(module, name, arity),
            mfa: mfa(module, name, arity),
@@ -240,49 +245,59 @@ defmodule ExAST.Symbols do
   end
 
   defp references_from_node({{:., meta, [module_ast, name]}, _call_meta, args} = node)
-       when is_atom(name) and is_list(args) do
-    case alias_name(module_ast) do
-      {:ok, module} ->
-        arity = length(args)
+       when is_list(args) do
+    if identifier?(name) do
+      case alias_name(module_ast) do
+        {:ok, module} ->
+          arity = length(args)
 
-        [
-          %Reference{
-            kind: :remote_call,
-            module: module,
-            name: Atom.to_string(name),
-            arity: arity,
-            qualified_name: qualified_name(module, name, arity),
-            mfa: mfa(module, name, arity),
-            line: meta[:line],
-            column: meta[:column],
-            node: node
-          }
-        ]
+          [
+            %Reference{
+              kind: :remote_call,
+              module: module,
+              name: identifier_name(name),
+              arity: arity,
+              qualified_name: qualified_name(module, name, arity),
+              mfa: mfa(module, name, arity),
+              line: meta[:line],
+              column: meta[:column],
+              node: node
+            }
+          ]
 
-      :error ->
-        []
+        :error ->
+          []
+      end
+    else
+      []
     end
   end
 
-  defp references_from_node({:@, meta, [{name, _, _args}]} = node) when is_atom(name) do
-    [
-      %Reference{
-        kind: :module_attribute,
-        module: nil,
-        name: Atom.to_string(name),
-        arity: nil,
-        qualified_name: "@#{name}",
-        mfa: nil,
-        line: meta[:line],
-        column: meta[:column],
-        node: node
-      }
-    ]
+  defp references_from_node({:@, meta, [{name, _, _args}]} = node) do
+    if identifier?(name) do
+      name = identifier_name(name)
+
+      [
+        %Reference{
+          kind: :module_attribute,
+          module: nil,
+          name: name,
+          arity: nil,
+          qualified_name: "@#{name}",
+          mfa: nil,
+          line: meta[:line],
+          column: meta[:column],
+          node: node
+        }
+      ]
+    else
+      []
+    end
   end
 
   defp references_from_node({:__aliases__, meta, parts} = node) when is_list(parts) do
-    if Enum.all?(parts, &is_atom/1) do
-      name = Enum.join(parts, ".")
+    if Enum.all?(parts, &identifier?/1) do
+      name = parts |> Enum.map(&identifier_name/1) |> Enum.join(".")
 
       [
         %Reference{
@@ -302,67 +317,63 @@ defmodule ExAST.Symbols do
     end
   end
 
-  defp references_from_node({name, meta, args} = node)
-       when is_atom(name) and is_list(args) and
-              name not in [
-                :__aliases__,
-                :...,
-                :_,
-                :.,
-                :@,
-                :defmodule,
-                :defdelegate,
-                :def,
-                :defp,
-                :defmacro,
-                :defmacrop,
-                :defcallback,
-                :defmacrocallback
-              ] do
-    arity = length(args)
+  defp references_from_node({name, meta, args} = node) when is_list(args) do
+    if identifier?(name) and not synthetic_call?(name) do
+      arity = length(args)
 
-    [
-      %Reference{
-        kind: :local_call,
-        module: nil,
-        name: Atom.to_string(name),
-        arity: arity,
-        qualified_name: qualified_name(nil, name, arity),
-        mfa: nil,
-        line: meta[:line],
-        column: meta[:column],
-        node: node
-      }
-    ]
+      [
+        %Reference{
+          kind: :local_call,
+          module: nil,
+          name: identifier_name(name),
+          arity: arity,
+          qualified_name: qualified_name(nil, name, arity),
+          mfa: nil,
+          line: meta[:line],
+          column: meta[:column],
+          node: node
+        }
+      ]
+    else
+      []
+    end
   end
 
   defp references_from_node(_node), do: []
 
   defp function_head({:when, _, [head | _guards]}), do: function_head(head)
-  defp function_head({name, _, nil}) when is_atom(name), do: {:ok, name, 0}
 
-  defp function_head({name, _, args}) when is_atom(name) and is_list(args),
-    do: {:ok, name, length(args)}
+  defp function_head({name, _, nil}) do
+    if identifier?(name), do: {:ok, name, 0}, else: :unknown
+  end
+
+  defp function_head({name, _, args}) when is_list(args) do
+    if identifier?(name), do: {:ok, name, length(args)}, else: :unknown
+  end
 
   defp function_head(_head), do: :unknown
 
-  defp callback_head({:"::", _, [{name, _, args}, _type]}) when is_atom(name) and is_list(args),
-    do: {:ok, name, length(args)}
+  defp callback_head({:"::", _, [{name, _, args}, _type]}) when is_list(args) do
+    if identifier?(name), do: {:ok, name, length(args)}, else: :unknown
+  end
 
-  defp callback_head({name, _, args}) when is_atom(name) and is_list(args),
-    do: {:ok, name, length(args)}
+  defp callback_head({name, _, args}) when is_list(args) do
+    if identifier?(name), do: {:ok, name, length(args)}, else: :unknown
+  end
 
   defp callback_head(_head), do: :unknown
 
   defp alias_name({:__aliases__, _, parts}) when is_list(parts) do
-    if Enum.all?(parts, &is_atom/1), do: {:ok, Enum.join(parts, ".")}, else: :error
+    if Enum.all?(parts, &identifier?/1),
+      do: {:ok, parts |> Enum.map(&identifier_name/1) |> Enum.join(".")},
+      else: :error
   end
 
   defp alias_name(atom) when is_atom(atom), do: {:ok, module_name(atom)}
-  defp alias_name(_ast), do: :error
+  defp alias_name(ident), do: if(Ident.ident?(ident), do: {:ok, Ident.name(ident)}, else: :error)
 
-  defp qualified_name(nil, name, arity), do: "#{name}/#{arity}"
-  defp qualified_name(module, name, arity), do: "#{module}.#{name}/#{arity}"
+  defp qualified_name(nil, name, arity), do: "#{identifier_name(name)}/#{arity}"
+  defp qualified_name(module, name, arity), do: "#{module}.#{identifier_name(name)}/#{arity}"
 
   defp mfa(nil, _name, _arity), do: nil
   defp mfa(_module, _name, nil), do: nil
@@ -420,8 +431,33 @@ defmodule ExAST.Symbols do
     |> String.replace_prefix("Elixir.", "")
   end
 
-  defp attribute_name(nil, name), do: "@#{name}"
-  defp attribute_name(module, name), do: "#{module}.@#{name}"
+  defp attribute_name(nil, name), do: "@#{identifier_name(name)}"
+  defp attribute_name(module, name), do: "#{module}.@#{identifier_name(name)}"
+
+  defp identifier?(value), do: is_atom(value) or Ident.ident?(value)
+
+  defp identifier_name(value) when is_atom(value), do: Atom.to_string(value)
+  defp identifier_name(value), do: Ident.name(value)
+
+  defp synthetic_call?(name) when is_atom(name) do
+    name in [
+      :__aliases__,
+      :...,
+      :_,
+      :.,
+      :@,
+      :defmodule,
+      :defdelegate,
+      :def,
+      :defp,
+      :defmacro,
+      :defmacrop,
+      :defcallback,
+      :defmacrocallback
+    ]
+  end
+
+  defp synthetic_call?(_name), do: false
 
   defp visibility(:defp), do: :private
   defp visibility(:defmacrop), do: :private

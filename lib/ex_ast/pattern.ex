@@ -1,5 +1,6 @@
 defmodule ExAST.Pattern do
   alias ExAST.CompiledPattern
+  alias ExAST.Ident
   alias ExAST.Index.Terms
 
   @moduledoc """
@@ -531,20 +532,20 @@ defmodule ExAST.Pattern do
   end
 
   defp call_candidate?({:|>, _, [_left, {{:., _, [_target, call_name]}, _, args}]}, name, arities)
-       when is_atom(call_name) and is_list(args),
-       do: call_name == name and arity_candidate?(length(args) + 1, arities)
+       when is_list(args),
+       do: Ident.equal?(call_name, name) and arity_candidate?(length(args) + 1, arities)
 
   defp call_candidate?({:|>, _, [_left, {call_name, _, args}]}, name, arities)
-       when is_atom(call_name) and is_list(args),
-       do: call_name == name and arity_candidate?(length(args) + 1, arities)
+       when is_list(args),
+       do: Ident.equal?(call_name, name) and arity_candidate?(length(args) + 1, arities)
 
   defp call_candidate?({{:., _, [_target, call_name]}, _, args}, name, arities)
-       when is_atom(call_name) and is_list(args),
-       do: call_name == name and arity_candidate?(length(args), arities)
+       when is_list(args),
+       do: Ident.equal?(call_name, name) and arity_candidate?(length(args), arities)
 
   defp call_candidate?({call_name, _, args}, name, arities)
-       when is_atom(call_name) and is_list(args),
-       do: call_name == name and arity_candidate?(length(args), arities)
+       when is_list(args),
+       do: Ident.equal?(call_name, name) and arity_candidate?(length(args), arities)
 
   defp call_candidate?(_node, _name, _arities), do: false
 
@@ -625,18 +626,22 @@ defmodule ExAST.Pattern do
     end
   end
 
-  # 3-tuple with same atom head (operators, special forms)
-  defp do_match({head, nil, schild}, {head, nil, pchild}, caps) when is_atom(head) do
-    do_match(schild, pchild, caps)
-  end
-
-  # 3-tuple where pattern head is a wildcard (_) or _-prefixed variable
+  # 3-tuple with same/equivalent head. Tagged source identifiers compare to
+  # pattern atoms by string without interning source names.
   defp do_match({shead, nil, schild}, {phead, nil, pchild}, caps)
-       when is_atom(shead) and is_atom(phead) and shead != phead do
-    case Atom.to_string(phead) do
-      "_" -> do_match(schild, pchild, caps)
-      "_" <> _ -> do_match(schild, pchild, caps)
-      _ -> :error
+       when is_atom(phead) do
+    cond do
+      Ident.equal?(shead, phead) ->
+        do_match(schild, pchild, caps)
+
+      wildcard_name?(phead) ->
+        do_match(schild, pchild, caps)
+
+      is_atom(shead) ->
+        :error
+
+      true ->
+        :error
     end
   end
 
@@ -662,6 +667,10 @@ defmodule ExAST.Pattern do
     else
       match_list_exact(source, pattern, caps)
     end
+  end
+
+  defp do_match(source, pattern, caps) when is_atom(pattern) do
+    if Ident.equal?(source, pattern), do: {:ok, caps}, else: :error
   end
 
   # Literal equality
@@ -719,6 +728,14 @@ defmodule ExAST.Pattern do
 
   # --- Captures ---
 
+  defp wildcard_name?(name) when is_atom(name) do
+    case Atom.to_string(name) do
+      "_" -> true
+      "_" <> _ -> true
+      _ -> false
+    end
+  end
+
   defp bind(name, node, captures) do
     case Map.fetch(captures, name) do
       {:ok, ^node} -> {:ok, captures}
@@ -730,9 +747,15 @@ defmodule ExAST.Pattern do
   defp match_attr_name(_name, {:_, nil, nil}, caps), do: {:ok, caps}
 
   defp match_attr_name(name, pname, caps) when is_atom(pname) do
-    case Atom.to_string(pname) |> String.first() do
-      "_" -> {:ok, caps}
-      _ -> bind(pname, name, caps)
+    cond do
+      wildcard_name?(pname) ->
+        {:ok, caps}
+
+      Ident.ident?(name) ->
+        if Ident.equal?(name, pname), do: {:ok, caps}, else: :error
+
+      true ->
+        bind(pname, name, caps)
     end
   end
 
@@ -751,7 +774,7 @@ defmodule ExAST.Pattern do
 
   defp find_value_by_key(kvs, key) do
     Enum.find_value(kvs, :error, fn
-      {k, v} when k == key -> {:ok, v}
+      {k, v} -> if Ident.equal?(k, key), do: {:ok, v}, else: nil
       _ -> nil
     end)
   end
