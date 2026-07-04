@@ -1,7 +1,7 @@
 defmodule ExAST.MixProject do
   use Mix.Project
 
-  @version "0.12.6"
+  @version "0.12.7"
   @source_url "https://github.com/elixir-vibe/ex_ast"
 
   def project do

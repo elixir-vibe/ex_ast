@@ -57,6 +57,25 @@ defmodule ExAST.TaggedIdentTest do
     assert "struct.field:name" in terms
   end
 
+  test "index terms ignore tagged map and struct update tails" do
+    ast =
+      {:__block__, [],
+       [
+         {:%{}, [], [{:|, [], [ident("base"), [{ident("name"), ident("value")}]]}]},
+         {:%, [],
+          [
+            {:__aliases__, [], [ident("User")]},
+            {:%{}, [], [{:|, [], [ident("user"), [{ident("name"), ident("value")}]]}]}
+          ]}
+       ]}
+
+    terms = Terms.from_ast(ast)
+
+    assert "node:map" in terms
+    assert "node:struct" in terms
+    assert "struct:User" in terms
+  end
+
   test "remote call terms include tagged module and function names" do
     ast =
       {{:., [], [{:__aliases__, [], [ident("Repo")]}, ident("get!")]}, [],

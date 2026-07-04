@@ -129,6 +129,9 @@ defmodule ExAST.Index.Terms do
       Enum.flat_map(fields, fn
         {key, _value} ->
           if identifier?(key), do: ["struct.field:#{identifier_name(key)}"], else: []
+
+        _other ->
+          []
       end)
 
     {node, field_terms ++ terms}
@@ -138,6 +141,7 @@ defmodule ExAST.Index.Terms do
     key_terms =
       Enum.flat_map(fields, fn
         {key, _value} -> if identifier?(key), do: ["map.key:#{identifier_name(key)}"], else: []
+        _other -> []
       end)
 
     {node, ["node:map" | key_terms] ++ terms}

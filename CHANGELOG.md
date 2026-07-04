@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.7
+
+### Fixed
+
+- Tagged identifier term extraction now tolerates map and struct update tails without crashing.
+
 ## 0.12.6
 
 ### Added
