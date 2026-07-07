@@ -37,6 +37,18 @@ defmodule ExAST.Index.TermsTest do
       assert Terms.signal("integer:0") == :normal
     end
 
+    test "indexes direct keyword argument literal terms" do
+      terms =
+        quote do
+          if valid?, do: false, else: true
+        end
+        |> Terms.from_ast()
+
+      assert MapSet.member?(terms, "call.kwarg:if/2:do:atom:false")
+      assert MapSet.member?(terms, "call.kwarg:if/2:else:atom:true")
+      assert Terms.signal("call.kwarg:if/2:do:atom:false") == :high
+    end
+
     test "indexes direct call argument literal terms" do
       terms =
         quote do
@@ -144,6 +156,18 @@ defmodule ExAST.Index.TermsTest do
   end
 
   describe "ExAST.Index.plan/1" do
+    test "uses keyword argument literal terms as exact candidates" do
+      plan =
+        quote do
+          if _, do: false, else: true
+        end
+        |> ExAST.Pattern.compile()
+        |> ExAST.Index.plan()
+
+      assert MapSet.member?(plan.required_terms, "call.kwarg:if/2:do:atom:false")
+      assert MapSet.member?(plan.required_terms, "call.kwarg:if/2:else:atom:true")
+    end
+
     test "uses cached terms from compiled patterns" do
       compiled =
         quote do

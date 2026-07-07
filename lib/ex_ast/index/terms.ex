@@ -43,6 +43,7 @@ defmodule ExAST.Index.Terms do
   def signal("atom:" <> atom) when atom in ["nil", "true", "false"], do: :normal
   def signal("integer:" <> _integer), do: :normal
   def signal("call.arg:" <> _argument_literal), do: :normal
+  def signal("call.kwarg:" <> _keyword_argument_literal), do: :high
 
   def signal("node:call"), do: :low
   def signal("node:local_call"), do: :low
@@ -277,9 +278,12 @@ defmodule ExAST.Index.Terms do
     args
     |> Enum.with_index(1)
     |> Enum.flat_map(fn {arg, position} ->
-      arg
-      |> direct_literal_terms()
-      |> Enum.flat_map(&argument_literal_terms(call, position, &1))
+      literal_terms =
+        arg
+        |> direct_literal_terms()
+        |> Enum.flat_map(&argument_literal_terms(call, position, &1))
+
+      literal_terms ++ keyword_argument_literal_terms(call, arg)
     end)
     |> Kernel.++(terms)
   end
@@ -314,6 +318,20 @@ defmodule ExAST.Index.Terms do
   end
 
   defp argument_literal_terms(call, position, term), do: ["call.arg:#{call}:#{position}:#{term}"]
+
+  defp keyword_argument_literal_terms(call, keyword) when is_list(keyword) do
+    Enum.flat_map(keyword, fn
+      {key, value} when is_atom(key) ->
+        value
+        |> direct_literal_terms()
+        |> Enum.map(&"call.kwarg:#{call}:#{key}:#{&1}")
+
+      _other ->
+        []
+    end)
+  end
+
+  defp keyword_argument_literal_terms(_call, _arg), do: []
 
   defp pipe_rhs_equivalent_terms({{:., _dot_meta, [module_ast, fun]}, _meta, args})
        when is_list(args) do
