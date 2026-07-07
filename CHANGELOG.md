@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.8
+
+### Fixed
+
+- Source term extraction now indexes pipe-equivalent call arities so normalized
+  direct-call patterns can retrieve piped-call candidates from external indexes.
+
 ## 0.12.7
 
 ### Fixed
