@@ -400,10 +400,13 @@ defmodule ExAST.Index.Terms do
 
   defp function_head(_head, _mode), do: :unknown
 
-  defp pattern_capture_call?({name, _meta, nil}, :pattern) when is_atom(name),
-    do: capture_name?(name)
+  defp pattern_capture_call?({name, _meta, nil}, :pattern),
+    do: capture_identifier?(name)
 
-  defp pattern_capture_call?({_name, _meta, args}, :pattern), do: args == nil
+  defp pattern_capture_call?({name, _meta, args}, :pattern) when is_list(args),
+    do: capture_identifier?(name)
+
+  defp pattern_capture_call?({_name, _meta, _args}, :pattern), do: false
   defp pattern_capture_call?(_node, _mode), do: false
 
   defp literal_alias?({:__aliases__, _, parts}), do: Enum.all?(parts, &identifier?/1)
@@ -428,13 +431,19 @@ defmodule ExAST.Index.Terms do
   defp synthetic_call?(name) when is_atom(name), do: name in [:__aliases__, :__block__, :..., :_]
   defp synthetic_call?(_name), do: false
 
-  defp capture_name?(:_), do: true
+  defp capture_identifier?(name) when is_atom(name), do: capture_name?(name)
+  defp capture_identifier?(name), do: Ident.ident?(name) and capture_name?(Ident.name(name))
 
-  defp capture_name?(name) do
+  defp capture_name?(:_), do: true
+  defp capture_name?("_"), do: true
+
+  defp capture_name?(name) when is_atom(name) do
     name
     |> Atom.to_string()
     |> String.starts_with?("_")
   end
+
+  defp capture_name?(name) when is_binary(name), do: String.starts_with?(name, "_")
 
   defp to_quoted(pattern) when is_binary(pattern), do: Code.string_to_quoted!(pattern)
   defp to_quoted(pattern), do: pattern

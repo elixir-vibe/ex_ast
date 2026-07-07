@@ -100,6 +100,18 @@ defmodule ExAST.Index.TermsTest do
   end
 
   describe "from_pattern/1" do
+    test "does not index wildcard function names in def patterns as literal names" do
+      terms =
+        quote do
+          @doc false
+          defp _(_), do: _
+        end
+        |> Terms.from_pattern()
+
+      refute MapSet.member?(terms, "def.name:_")
+      refute MapSet.member?(terms, "def:_/1")
+    end
+
     test "does not infer same-argument terms for pipe patterns" do
       terms =
         quote do
