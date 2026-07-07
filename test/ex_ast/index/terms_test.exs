@@ -51,6 +51,30 @@ defmodule ExAST.Index.TermsTest do
       assert MapSet.member?(terms, "call.arg:Map.put/3:3:atom:boolean")
       assert MapSet.member?(terms, "call.arg:==/2:2:integer:0")
     end
+
+    test "indexes source call arity terms for pipe-equivalent matching" do
+      pipe_terms =
+        quote do
+          items |> Enum.dedup() |> MapSet.new()
+        end
+        |> Terms.from_ast()
+
+      assert MapSet.member?(pipe_terms, "call.remote:Enum.dedup/0")
+      assert MapSet.member?(pipe_terms, "call.remote:Enum.dedup/1")
+      assert MapSet.member?(pipe_terms, "call.remote:MapSet.new/0")
+      assert MapSet.member?(pipe_terms, "call.remote:MapSet.new/1")
+
+      direct_terms =
+        quote do
+          MapSet.new(Enum.dedup(items))
+        end
+        |> Terms.from_ast()
+
+      assert MapSet.member?(direct_terms, "call.remote:Enum.dedup/1")
+      assert MapSet.member?(direct_terms, "call.remote:Enum.dedup/0")
+      assert MapSet.member?(direct_terms, "call.remote:MapSet.new/1")
+      assert MapSet.member?(direct_terms, "call.remote:MapSet.new/0")
+    end
   end
 
   describe "from_pattern/1" do

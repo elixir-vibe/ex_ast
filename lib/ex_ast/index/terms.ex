@@ -153,7 +153,11 @@ defmodule ExAST.Index.Terms do
       else: {node, terms}
   end
 
-  defp visit({{:., _dot_meta, [module_ast, fun]}, _meta, args} = node, terms, _mode)
+  defp visit({:|>, _meta, [_left, right]} = node, terms, :source) do
+    {node, pipe_rhs_equivalent_terms(right) ++ terms}
+  end
+
+  defp visit({{:., _dot_meta, [module_ast, fun]}, _meta, args} = node, terms, mode)
        when is_list(args) do
     if identifier?(fun) do
       fun = identifier_name(fun)
@@ -173,7 +177,9 @@ defmodule ExAST.Index.Terms do
 
           [
             "call.module:#{module}",
-            "call.remote:#{remote}" | arg_literal_terms(remote, args, terms)
+            "call.remote:#{remote}"
+            | source_pipe_equivalent_remote_terms(mode, module, fun, arity) ++
+                arg_literal_terms(remote, args, terms)
           ]
         else
           terms
@@ -200,7 +206,9 @@ defmodule ExAST.Index.Terms do
          "node:local_call",
          "call.local:#{local}",
          "call.function:#{name}",
-         "call.arity:#{arity}" | arg_literal_terms(local, args, same_arg_terms(name, args, terms))
+         "call.arity:#{arity}"
+         | source_pipe_equivalent_local_terms(mode, name, arity) ++
+             arg_literal_terms(local, args, same_arg_terms(name, args, terms))
        ]}
     end
   end
@@ -286,6 +294,51 @@ defmodule ExAST.Index.Terms do
   end
 
   defp argument_literal_terms(call, position, term), do: ["call.arg:#{call}:#{position}:#{term}"]
+
+  defp pipe_rhs_equivalent_terms({{:., _dot_meta, [module_ast, fun]}, _meta, args})
+       when is_list(args) do
+    if literal_alias?(module_ast) and identifier?(fun) do
+      module = alias_name(module_ast)
+      fun = identifier_name(fun)
+      arity = length(args) + 1
+
+      ["call.remote:#{module}.#{fun}/#{arity}", "call.arity:#{arity}"]
+    else
+      []
+    end
+  end
+
+  defp pipe_rhs_equivalent_terms({name, _meta, args}) when is_list(args) do
+    if identifier?(name) and not synthetic_call?(name) do
+      name = identifier_name(name)
+      arity = length(args) + 1
+
+      ["call.local:#{name}/#{arity}", "call.arity:#{arity}"]
+    else
+      []
+    end
+  end
+
+  defp pipe_rhs_equivalent_terms({name, _meta, nil}) do
+    if identifier?(name) and not synthetic_call?(name) do
+      name = identifier_name(name)
+      ["call.local:#{name}/1", "call.arity:1"]
+    else
+      []
+    end
+  end
+
+  defp pipe_rhs_equivalent_terms(_right), do: []
+
+  defp source_pipe_equivalent_remote_terms(:source, module, fun, arity) when arity > 0,
+    do: ["call.remote:#{module}.#{fun}/#{arity - 1}", "call.arity:#{arity - 1}"]
+
+  defp source_pipe_equivalent_remote_terms(_mode, _module, _fun, _arity), do: []
+
+  defp source_pipe_equivalent_local_terms(:source, name, arity) when arity > 0,
+    do: ["call.local:#{name}/#{arity - 1}", "call.arity:#{arity - 1}"]
+
+  defp source_pipe_equivalent_local_terms(_mode, _name, _arity), do: []
 
   defp same_arg_terms(name, [left, right], terms) do
     if normalized(left) == normalized(right) do
