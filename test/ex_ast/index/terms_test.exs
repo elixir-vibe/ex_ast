@@ -52,6 +52,27 @@ defmodule ExAST.Index.TermsTest do
       assert MapSet.member?(terms, "call.arg:==/2:2:integer:0")
     end
 
+    test "indexes Sourceror-wrapped literal call arguments from source strings" do
+      terms =
+        """
+        items |> Enum.sort() |> Enum.at(-1)
+        items |> Enum.sort() |> Enum.take(-3)
+        length(items) == 0
+        String.length(value) != 1
+        """
+        |> Terms.from_source()
+
+      assert MapSet.member?(terms, "integer:-1")
+      assert MapSet.member?(terms, "integer:-3")
+      assert MapSet.member?(terms, "integer:0")
+      assert MapSet.member?(terms, "integer:1")
+      assert MapSet.member?(terms, "call.arg:Enum.at/1:1:integer:-1")
+      assert MapSet.member?(terms, "call.arg:Enum.take/1:1:integer:-3")
+      assert MapSet.member?(terms, "call.arg:==/2:2:integer:0")
+      assert MapSet.member?(terms, "call.arg:!=/2:2:integer:1")
+      refute Enum.any?(terms, &String.starts_with?(&1, "call.local:__block__/"))
+    end
+
     test "indexes source call arity terms for pipe-equivalent matching" do
       pipe_terms =
         quote do

@@ -235,6 +235,8 @@ defmodule ExAST.Index.Terms do
   defp literal_terms(true), do: ["atom:true"]
   defp literal_terms(false), do: ["atom:false"]
 
+  defp literal_terms({:__block__, _meta, [literal]}), do: literal_terms(literal)
+
   defp literal_terms(integer) when is_integer(integer) and integer in -10..10,
     do: ["integer:#{integer}"]
 
@@ -242,8 +244,12 @@ defmodule ExAST.Index.Terms do
 
   defp literal_terms({:__exograph_ident__, name}) when is_binary(name), do: ["atom:#{name}"]
 
-  defp literal_terms({:-, _meta, [integer]}) when is_integer(integer) and integer in 1..10,
-    do: ["integer:-#{integer}"]
+  defp literal_terms({:-, _meta, [literal]}) do
+    case literal_integer(literal) do
+      integer when integer in 1..10 -> ["integer:-#{integer}"]
+      _other -> []
+    end
+  end
 
   defp literal_terms({name, meta, context})
        when is_atom(name) and is_list(meta) and (is_atom(context) or is_nil(context)),
@@ -282,11 +288,17 @@ defmodule ExAST.Index.Terms do
   defp direct_literal_terms(true), do: ["atom:true"]
   defp direct_literal_terms(false), do: ["atom:false"]
 
+  defp direct_literal_terms({:__block__, _meta, [literal]}), do: direct_literal_terms(literal)
+
   defp direct_literal_terms(integer) when is_integer(integer) and integer in -10..10,
     do: ["integer:#{integer}"]
 
-  defp direct_literal_terms({:-, _meta, [integer]}) when is_integer(integer) and integer in 1..10,
-    do: ["integer:-#{integer}"]
+  defp direct_literal_terms({:-, _meta, [literal]}) do
+    case literal_integer(literal) do
+      integer when integer in 1..10 -> ["integer:-#{integer}"]
+      _other -> []
+    end
+  end
 
   defp direct_literal_terms({:__exograph_ident__, name}) when is_binary(name),
     do: ["atom:#{name}"]
@@ -407,7 +419,11 @@ defmodule ExAST.Index.Terms do
   defp visibility(:defmacrop), do: :private
   defp visibility(_form), do: :public
 
-  defp synthetic_call?(name) when is_atom(name), do: name in [:__aliases__, :..., :_]
+  defp literal_integer({:__block__, _meta, [integer]}) when is_integer(integer), do: integer
+  defp literal_integer(integer) when is_integer(integer), do: integer
+  defp literal_integer(_other), do: nil
+
+  defp synthetic_call?(name) when is_atom(name), do: name in [:__aliases__, :__block__, :..., :_]
   defp synthetic_call?(_name), do: false
 
   defp capture_name?(:_), do: true
