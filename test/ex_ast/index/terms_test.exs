@@ -100,6 +100,17 @@ defmodule ExAST.Index.TermsTest do
   end
 
   describe "from_pattern/1" do
+    test "does not infer same-argument terms for pipe patterns" do
+      terms =
+        quote do
+          Enum.filter(_, _) |> Enum.filter(_, _)
+        end
+        |> Terms.from_pattern()
+
+      assert MapSet.member?(terms, "call.local:|>/2")
+      refute MapSet.member?(terms, "call.local.same_args:|>/2")
+    end
+
     test "indexes boolean, nil, and small integer literals in patterns" do
       terms =
         quote do

@@ -360,6 +360,8 @@ defmodule ExAST.Index.Terms do
 
   defp source_pipe_equivalent_local_terms(_mode, _name, _arity), do: []
 
+  defp same_arg_terms("|>", _args, terms), do: terms
+
   defp same_arg_terms(name, [left, right], terms) do
     if normalized(left) == normalized(right) do
       ["call.local.same_args:#{name}/2" | terms]
