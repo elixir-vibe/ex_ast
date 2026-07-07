@@ -59,6 +59,7 @@ defmodule ExAST.Index.TermsTest do
         end
         |> Terms.from_ast()
 
+      assert MapSet.member?(pipe_terms, "call.local:|>/2")
       assert MapSet.member?(pipe_terms, "call.remote:Enum.dedup/0")
       assert MapSet.member?(pipe_terms, "call.remote:Enum.dedup/1")
       assert MapSet.member?(pipe_terms, "call.remote:MapSet.new/0")

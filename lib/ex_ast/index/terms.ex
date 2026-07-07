@@ -154,7 +154,15 @@ defmodule ExAST.Index.Terms do
   end
 
   defp visit({:|>, _meta, [_left, right]} = node, terms, :source) do
-    {node, pipe_rhs_equivalent_terms(right) ++ terms}
+    {node,
+     [
+       "node:call",
+       "node:local_call",
+       "call.local:|>/2",
+       "call.function:|>",
+       "call.arity:2"
+       | pipe_rhs_equivalent_terms(right) ++ terms
+     ]}
   end
 
   defp visit({{:., _dot_meta, [module_ast, fun]}, _meta, args} = node, terms, mode)

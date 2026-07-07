@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Source term extraction now also indexes the pipe operator itself for piped
+  source calls, preserving exact candidate retrieval for pipe-pattern queries.
+
 ## 0.12.8
 
 ### Fixed
