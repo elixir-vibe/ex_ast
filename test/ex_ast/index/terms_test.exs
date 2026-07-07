@@ -47,6 +47,17 @@ defmodule ExAST.Index.TermsTest do
       assert MapSet.member?(terms, "call.kwarg:if/2:do:atom:false")
       assert MapSet.member?(terms, "call.kwarg:if/2:else:atom:true")
       assert Terms.signal("call.kwarg:if/2:do:atom:false") == :high
+
+      atom_free_terms =
+        {:if, [],
+         [
+           {{:__exograph_ident__, "valid?"}, [], [{{:__exograph_ident__, "value"}, [], nil}]},
+           [{{:__exograph_ident__, "do"}, false}, {{:__exograph_ident__, "else"}, true}]
+         ]}
+        |> Terms.from_ast()
+
+      assert MapSet.member?(atom_free_terms, "call.kwarg:if/2:do:atom:false")
+      assert MapSet.member?(atom_free_terms, "call.kwarg:if/2:else:atom:true")
     end
 
     test "indexes direct call argument literal terms" do

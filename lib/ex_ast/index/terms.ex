@@ -321,10 +321,16 @@ defmodule ExAST.Index.Terms do
 
   defp keyword_argument_literal_terms(call, keyword) when is_list(keyword) do
     Enum.flat_map(keyword, fn
-      {key, value} when is_atom(key) ->
-        value
-        |> direct_literal_terms()
-        |> Enum.map(&"call.kwarg:#{call}:#{key}:#{&1}")
+      {key, value} ->
+        if identifier?(key) do
+          key = identifier_name(key)
+
+          value
+          |> direct_literal_terms()
+          |> Enum.map(&"call.kwarg:#{call}:#{key}:#{&1}")
+        else
+          []
+        end
 
       _other ->
         []
