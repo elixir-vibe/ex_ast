@@ -6,6 +6,10 @@
 
 - Source term extraction now also indexes the pipe operator itself for piped
   source calls, preserving exact candidate retrieval for pipe-pattern queries.
+- Source term extraction now recognizes Sourceror-wrapped integer literals in
+  call-argument terms and no longer indexes wrapper `__block__` nodes as calls.
+- Pattern term extraction no longer requires impossible pipe same-argument terms
+  or literal wildcard function names in `def` patterns.
 
 ## 0.12.8
 
