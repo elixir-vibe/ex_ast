@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.12.10
+
+### Added
+
+- Added opt-in `expand_imports: true` matching for bare and `except:` imports,
+  with module-scoped imports, local-definition shadowing, and preserved
+  function/macro import semantics.
+- Added `--expand-imports` to `mix ex_ast.search`.
+
 ## 0.12.9
 
 ### Fixed
