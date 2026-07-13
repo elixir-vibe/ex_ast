@@ -297,7 +297,7 @@ defmodule ExAST.Symbols do
 
   defp references_from_node({:__aliases__, meta, parts} = node) when is_list(parts) do
     if Enum.all?(parts, &identifier?/1) do
-      name = parts |> Enum.map(&identifier_name/1) |> Enum.join(".")
+      name = Enum.map_join(parts, ".", &identifier_name/1)
 
       [
         %Reference{
@@ -365,7 +365,7 @@ defmodule ExAST.Symbols do
 
   defp alias_name({:__aliases__, _, parts}) when is_list(parts) do
     if Enum.all?(parts, &identifier?/1),
-      do: {:ok, parts |> Enum.map(&identifier_name/1) |> Enum.join(".")},
+      do: {:ok, Enum.map_join(parts, ".", &identifier_name/1)},
       else: :error
   end
 

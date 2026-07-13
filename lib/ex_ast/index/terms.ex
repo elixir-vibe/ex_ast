@@ -437,7 +437,7 @@ defmodule ExAST.Index.Terms do
   defp literal_alias?(_ast), do: false
 
   defp alias_name({:__aliases__, _, parts}),
-    do: parts |> Enum.map(&identifier_name/1) |> Enum.join(".")
+    do: Enum.map_join(parts, ".", &identifier_name/1)
 
   defp identifier?(name), do: is_atom(name) or Ident.ident?(name)
 

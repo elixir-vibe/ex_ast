@@ -40,6 +40,7 @@ defmodule ExAST.Index.TermsTest do
     test "indexes direct keyword argument literal terms" do
       terms =
         quote do
+          # credo:disable-for-next-line ExSlop.Check.Refactor.RedundantBooleanIf
           if valid?, do: false, else: true
         end
         |> Terms.from_ast()
@@ -138,6 +139,7 @@ defmodule ExAST.Index.TermsTest do
     test "does not infer same-argument terms for pipe patterns" do
       terms =
         quote do
+          # credo:disable-for-next-line Credo.Check.Refactor.FilterFilter
           Enum.filter(_, _) |> Enum.filter(_, _)
         end
         |> Terms.from_pattern()
@@ -170,6 +172,7 @@ defmodule ExAST.Index.TermsTest do
     test "uses keyword argument literal terms as exact candidates" do
       plan =
         quote do
+          # credo:disable-for-next-line ExSlop.Check.Refactor.RedundantBooleanIf
           if _, do: false, else: true
         end
         |> ExAST.Pattern.compile()
