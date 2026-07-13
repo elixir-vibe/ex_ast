@@ -387,6 +387,140 @@ defmodule ExAST.PatternTest do
       assert [_] = ExAST.Patcher.find_all(ast, "Ecto.Query.from(_, _)")
     end
 
+    test "expand_imports resolves a bare import to its real exports" do
+      source = """
+      import Enum
+
+      map(list, &(&1 + 1))
+      """
+
+      assert [] = ExAST.Patcher.find_all(source, "Enum.map(_, _)")
+
+      assert [_] =
+               ExAST.Patcher.find_all(source, "Enum.map(_, _)", expand_imports: true)
+    end
+
+    test "expand_imports resolves import :except to the complement" do
+      source = """
+      import Enum, except: [map: 2]
+
+      map(list, &(&1 + 1))
+      filter(list, &(&1 > 0))
+      """
+
+      assert [] = ExAST.Patcher.find_all(source, "Enum.map(_, _)", expand_imports: true)
+      assert [_] = ExAST.Patcher.find_all(source, "Enum.filter(_, _)", expand_imports: true)
+    end
+
+    test "expand_imports does not expand locally defined functions" do
+      source = """
+      defmodule Demo do
+        import Enum
+
+        def map(a, b), do: a + b
+        def run, do: map(1, 2)
+      end
+      """
+
+      assert [] = ExAST.Patcher.find_all(source, "Enum.map(_, _)", expand_imports: true)
+    end
+
+    test "expand_imports leaves unknown modules alone" do
+      source = """
+      import NotARealModule
+
+      whatever(1, 2)
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "whatever(_, _)", expand_imports: true)
+    end
+
+    test "expand_imports does not leak a bare import into a sibling module" do
+      source = """
+      defmodule A do
+        import Enum
+
+        def run(list), do: map(list, & &1)
+      end
+
+      defmodule B do
+        def run(list), do: map(list, & &1)
+      end
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "Enum.map(_, _)", expand_imports: true)
+    end
+
+    test "expand_imports applies an outer import to a nested module" do
+      source = """
+      defmodule A do
+        import Enum
+
+        defmodule B do
+          def run(list), do: map(list, & &1)
+        end
+      end
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "Enum.map(_, _)", expand_imports: true)
+    end
+
+    test "expand_imports local shadowing is scoped to the import's module" do
+      source = """
+      defmodule A do
+        def map(a, b), do: {a, b}
+      end
+
+      defmodule B do
+        import Enum
+
+        def run(list), do: map(list, & &1)
+      end
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "Enum.map(_, _)", expand_imports: true)
+    end
+
+    test "expand_imports local shadowing in a nested module" do
+      source = """
+      defmodule A do
+        import Enum
+
+        defmodule B do
+          def map(a, b), do: {a, b}
+
+          def run(list), do: map(list, & &1)
+        end
+      end
+      """
+
+      assert [] = ExAST.Patcher.find_all(source, "Enum.map(_, _)", expand_imports: true)
+    end
+
+    test "expand_imports only: :functions expands functions but not macros" do
+      source = """
+      import ExAST.Query, only: :functions
+
+      from(pattern)
+      where(query, expr)
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "ExAST.Query.from(_)", expand_imports: true)
+      assert [] = ExAST.Patcher.find_all(source, "ExAST.Query.where(_, _)", expand_imports: true)
+    end
+
+    test "expand_imports only: :macros expands macros but not functions" do
+      source = """
+      import ExAST.Query, only: :macros
+
+      from(pattern)
+      where(query, expr)
+      """
+
+      assert [] = ExAST.Patcher.find_all(source, "ExAST.Query.from(_)", expand_imports: true)
+      assert [_] = ExAST.Patcher.find_all(source, "ExAST.Query.where(_, _)", expand_imports: true)
+    end
+
     test "alias" do
       assert {:ok, caps} = match!("alias MyApp.Accounts.User", "alias mod")
       assert Map.has_key?(caps, :mod)
