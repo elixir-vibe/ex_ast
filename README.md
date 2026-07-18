@@ -80,6 +80,12 @@ end
 Enum.map(_, _)
 Logger.info(...)
 
+# Ellipsis as a sub-pattern — pin `...`/`[...]` to a position
+def _ do [...] end          # functions whose body is a list literal
+{:ok, [...]}                # an :ok tuple wrapping any list
+[x, y, z, ...]              # capture leading elements; ... absorbs the rest
+[..., y, z]                 # capture trailing elements; ... absorbs the rest
+
 # Definitions and function-name captures
 def handle_call(msg, _, state) do _ end
 def name(_, _) do ... end      # captures the definition name

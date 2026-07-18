@@ -97,6 +97,64 @@ defmodule ExAST.PatcherTest do
     end
   end
 
+  describe "find_all/2 with list ellipsis patterns" do
+    test "[...] matches any list, including empty" do
+      assert [_] = Patcher.find_all("[1, 2, 3]", "[...]")
+      assert [_] = Patcher.find_all("[]", "[...]")
+      assert [_] = Patcher.find_all("[:only]", "[...]")
+    end
+
+    test "[1, ...] matches lists with a leading fixed element only" do
+      assert [_] = Patcher.find_all("[1, 2, 3]", "[1, ...]")
+      assert [_] = Patcher.find_all("[1]", "[1, ...]")
+      assert Patcher.find_all("[2, 3]", "[1, ...]") == []
+    end
+
+    test "[..., x] matches and captures the trailing element" do
+      assert [%{captures: %{x: 3}}] = Patcher.find_all("[1, 2, 3]", "[..., x]")
+    end
+
+    test "[1, ..., z] matches leading and trailing fixed elements" do
+      assert [%{captures: %{z: 3}}] = Patcher.find_all("[1, 2, 3]", "[1, ..., z]")
+      assert Patcher.find_all("[9, 2, 3]", "[1, ..., z]") == []
+    end
+
+    test "ellipsis absorbs a variable-length middle" do
+      assert [_] = Patcher.find_all("[1, 2, 3, 4, 5]", "[1, ..., z]")
+      assert [_] = Patcher.find_all("[1, 2]", "[1, ..., z]")
+    end
+
+    test "[x, y, z, ...] captures multiple leading elements" do
+      assert [%{captures: %{x: 10, y: 20, z: 30}}] =
+               Patcher.find_all("[10, 20, 30, 40, 50]", "[x, y, z, ...]")
+
+      assert Patcher.find_all("[10, 20]", "[x, y, z, ...]") == []
+    end
+
+    test "[..., y, z] captures multiple trailing elements" do
+      assert [%{captures: %{y: 40, z: 50}}] =
+               Patcher.find_all("[10, 20, 30, 40, 50]", "[..., y, z]")
+    end
+
+    test "[first, second, ..., last] captures on both sides of the ellipsis" do
+      assert [%{captures: %{first: 10, second: 20, last: 50}}] =
+               Patcher.find_all("[10, 20, 30, 40, 50]", "[first, second, ..., last]")
+    end
+
+    test "fixed-length list patterns still match exactly (regression)" do
+      assert [_] = Patcher.find_all("[1, 2, 3]", "[1, 2, 3]")
+      assert [_] = Patcher.find_all("[1, 2, 3]", "[_, _, _]")
+      assert Patcher.find_all("[1, 2, 3]", "[_, _]") == []
+    end
+
+    test "a literal is matched once, not once per Sourceror block wrapper" do
+      assert [_] = Patcher.find_all("f([:a, :b])", "[...]")
+      assert [_] = Patcher.find_all("f(42)", "42")
+      assert [_] = Patcher.find_all("f(:hello)", ":hello")
+      assert [_] = Patcher.find_all("f(\"hi\")", "\"hi\"")
+    end
+  end
+
   describe "replace_all/3" do
     test "replaces single match" do
       source = "IO.inspect(data)\n"
