@@ -789,6 +789,20 @@ defmodule ExAST.Pattern do
     end
   end
 
+  # Arity-constrained definition head: `def name/2`, `def _/0`, `def name/_`.
+  # The name part is a wildcard (`_`) or a capture bound to the function name
+  # atom; the arity part is an integer or `_` for any arity.
+  defp do_match(
+         {form, nil, [shead | srest]},
+         {form, nil, [{:/, nil, [name_pat, arity_pat]} | prest]},
+         caps
+       )
+       when form in [:def, :defp, :defmacro, :defmacrop] do
+    with {:ok, caps} <- match_def_head_arity(shead, name_pat, arity_pat, caps) do
+      do_match(srest, prest, caps)
+    end
+  end
+
   # 3-tuple with same/equivalent head. Tagged source identifiers compare to
   # pattern atoms by string without interning source names.
   defp do_match({shead, nil, schild}, {phead, nil, pchild}, caps)
@@ -898,6 +912,38 @@ defmodule ExAST.Pattern do
       _ -> false
     end
   end
+
+  # --- Definition arity matching ---
+
+  defp match_def_head_arity(shead, name_pat, arity_pat, caps) do
+    case def_head_signature(shead) do
+      {:ok, name, arity} ->
+        with {:ok, caps} <- match_def_name(name, name_pat, caps) do
+          match_def_arity(arity, arity_pat, caps)
+        end
+
+      :error ->
+        :error
+    end
+  end
+
+  defp def_head_signature({:when, nil, [head | _guards]}), do: def_head_signature(head)
+  defp def_head_signature({name, nil, nil}), do: {:ok, name, 0}
+  defp def_head_signature({name, nil, args}) when is_list(args), do: {:ok, name, length(args)}
+  defp def_head_signature(_head), do: :error
+
+  defp match_def_name(name, {pname, nil, nil}, caps) when is_atom(pname) do
+    if wildcard_name?(pname), do: {:ok, caps}, else: bind(pname, name_atom_value(name), caps)
+  end
+
+  defp match_def_name(_name, _name_pat, _caps), do: :error
+
+  defp name_atom_value(name) when is_atom(name), do: name
+  defp name_atom_value(name), do: Ident.name(name)
+
+  defp match_def_arity(arity, arity, caps) when is_integer(arity), do: {:ok, caps}
+  defp match_def_arity(_arity, {:_, nil, nil}, caps), do: {:ok, caps}
+  defp match_def_arity(_arity, _arity_pat, _caps), do: :error
 
   defp bind(name, node, captures) do
     case Map.fetch(captures, name) do

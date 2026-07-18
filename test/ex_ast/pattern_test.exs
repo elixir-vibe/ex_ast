@@ -181,6 +181,60 @@ defmodule ExAST.PatternTest do
     end
   end
 
+  describe "arity syntax in definitions" do
+    defp find(source, pattern) do
+      ast = Sourceror.parse_string!(source)
+      ExAST.Patcher.find_all(ast, pattern)
+    end
+
+    @fixture """
+    defmodule M do
+      def id, do: "x"
+      def apply(a, b), do: %{a | k: b}
+    end
+    """
+
+    test "def name/0 matches only zero-arity defs" do
+      assert [%{captures: %{name: :id}}] = find(@fixture, "def name/0 do ... end")
+    end
+
+    test "def name/2 matches only two-arity defs" do
+      assert [%{captures: %{name: :apply}}] = find(@fixture, "def name/2 do ... end")
+    end
+
+    test "def name/_ matches any arity and captures the name" do
+      names = @fixture |> find("def name/_ do ... end") |> Enum.map(& &1.captures.name)
+      assert Enum.sort(names) == [:apply, :id]
+    end
+
+    test "def _/2 is a non-capturing arity constraint" do
+      assert [%{captures: caps}] = find(@fixture, "def _/2 do ... end")
+      assert caps == %{}
+    end
+
+    test "empty-paren zero-arity source matches def name/0" do
+      assert [%{captures: %{name: :ping}}] =
+               find("def ping(), do: :pong", "def name/0 do ... end")
+    end
+
+    test "arity syntax respects guards" do
+      source = "def clamp(x) when x > 0, do: x"
+      assert [%{captures: %{name: :clamp}}] = find(source, "def name/1 do ... end")
+      assert [] = find(source, "def name/2 do ... end")
+    end
+
+    test "arity syntax matches defmacro heads" do
+      assert [%{captures: %{name: :m}}] =
+               find("defmacro m(a, b), do: {a, b}", "defmacro name/2 do ... end")
+    end
+
+    test "arity syntax respects the definition kind" do
+      source = "defp helper(x), do: x"
+      assert [%{captures: %{name: :helper}}] = find(source, "defp name/1 do ... end")
+      assert [] = find(source, "def name/1 do ... end")
+    end
+  end
+
   describe "pipes" do
     test "pipe into function" do
       assert {:ok, %{}} = match!("data |> Enum.map(fun)", "_ |> Enum.map(_)")
