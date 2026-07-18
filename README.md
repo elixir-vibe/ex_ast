@@ -3,7 +3,8 @@
 Search, replace, and diff Elixir code by AST pattern.
 
 Patterns are plain Elixir — variables capture, `_` is a wildcard,
-structs match partially, pipes are normalized. `...` captures variable arity,
+structs match partially, pipes are normalized. `...` matches the rest —
+extra call arguments, a block body, or any other map/struct entries —
 `^name` matches a literal variable name, `name`/`fun`/`function` can capture
 function names in definitions, and `fun`/`function` can capture call names. No
 regex, no custom DSL.
@@ -103,8 +104,11 @@ a = Repo.get!(_, _); Repo.delete(a)
 
 # Tuples, structs, maps
 {:ok, result}
-%User{role: :admin}
-%{name: name}
+%User{role: :admin}          # struct with at least this field
+%Struct{...}                 # any struct of that type
+%{name: name}                # map with exactly these keys
+%{..., name: name}           # any map with at least this key
+%{...}                       # any map, including empty
 
 # Directives and attributes
 use GenServer

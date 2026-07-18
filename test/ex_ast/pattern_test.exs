@@ -181,6 +181,51 @@ defmodule ExAST.PatternTest do
     end
   end
 
+  describe "map and struct subset matching via search" do
+    test "a plain map pattern matches only the exact key set" do
+      src = "one = %{a: 1}\ntwo = %{a: 1, b: 2}\n"
+      assert [%{}] = ExAST.Patcher.find_all(src, "%{a: 1}")
+    end
+
+    test "%{..., k: v} matches any map containing that entry" do
+      src = "one = %{a: 1}\ntwo = %{a: 1, b: 2}\n"
+      assert [%{}, %{}] = ExAST.Patcher.find_all(src, "%{..., a: 1}")
+    end
+
+    test "%{..., k: capture} binds the value from a larger map" do
+      assert [%{captures: %{v: 2}}] = ExAST.Patcher.find_all("x = %{a: 1, b: 2}", "%{..., b: v}")
+    end
+
+    test "a struct pattern matches structs of that type by a subset of fields" do
+      assert [%{}] =
+               ExAST.Patcher.find_all(
+                 ~s|x = %Config{port: 4000, host: "y"}|,
+                 "%Config{port: 4000}"
+               )
+    end
+  end
+
+  describe "map patterns with ellipsis" do
+    test "%{...} matches any map without crashing on call-valued entries" do
+      source = """
+      defmodule M do
+        def perms, do: %{admin: grant(:admin), user: :ok}
+      end
+      """
+
+      assert [%{}] = ExAST.Patcher.find_all(source, "def name do %{...} end")
+    end
+
+    test "%{...} matches an empty map" do
+      assert [%{}] = ExAST.Patcher.find_all("x = %{}", "%{...}")
+    end
+
+    test "%Struct{...} matches any struct of that type, including empty" do
+      assert [%{}] = ExAST.Patcher.find_all(~s|x = %Config{port: 4000}|, "%Config{...}")
+      assert [%{}] = ExAST.Patcher.find_all("x = %Config{}", "%Config{...}")
+    end
+  end
+
   describe "pipes" do
     test "pipe into function" do
       assert {:ok, %{}} = match!("data |> Enum.map(fun)", "_ |> Enum.map(_)")

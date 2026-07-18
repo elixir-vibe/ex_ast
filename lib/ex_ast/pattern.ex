@@ -928,7 +928,9 @@ defmodule ExAST.Pattern do
   # --- Subset matching for structs/maps ---
 
   defp match_subset(source_kvs, pattern_kvs, caps) do
-    Enum.reduce_while(pattern_kvs, {:ok, caps}, fn {pkey, pval}, {:ok, caps} ->
+    pattern_kvs
+    |> Enum.reject(&ellipsis?/1)
+    |> Enum.reduce_while({:ok, caps}, fn {pkey, pval}, {:ok, caps} ->
       source_kvs
       |> find_value_by_key(pkey)
       |> match_kv_value(pval, caps)

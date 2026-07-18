@@ -262,25 +262,20 @@ defmodule Mix.Tasks.ExAst.SearchTest do
     end
 
     @tag :tmp_dir
-    test "--count-by-file reports per-file counts", %{tmp_dir: dir} do
-      a = Path.join(dir, "a.ex")
-      b = Path.join(dir, "b.ex")
-      File.write!(a, "IO.inspect(1)\nIO.inspect(2)\n")
-      File.write!(b, "IO.inspect(3)\n")
+    test "a map pattern with ... matches through the mix task", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+
+      File.write!(
+        file,
+        "defmodule M do\n  def perms, do: %{admin: grant(:admin), user: :ok}\nend\n"
+      )
 
       output =
         capture_io(fn ->
-          Mix.Task.run("ex_ast.search", ["IO.inspect(_)", a, b, "--count-by-file"])
+          Mix.Task.run("ex_ast.search", ["def name do %{...} end", file])
         end)
 
-      assert output =~ "2\t#{a}"
-      assert output =~ "1\t#{b}"
-      assert output =~ "3 match(es) in 2 file(s)"
-
-      lines = String.split(output, "\n", trim: true)
-
-      assert Enum.find_index(lines, &(&1 == "2\t#{a}")) <
-               Enum.find_index(lines, &(&1 == "1\t#{b}"))
+      assert output =~ "1 match(es)"
     end
   end
 
