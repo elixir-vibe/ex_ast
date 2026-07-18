@@ -18,6 +18,12 @@ defmodule ExAST.Symbols do
           | Definition.t()
           | Reference.t()
 
+  @doc """
+  The `def`-family forms treated as function/macro definitions.
+  """
+  @spec definition_forms() :: [atom()]
+  def definition_forms, do: @definition_forms
+
   @spec definitions(String.t() | Macro.t()) :: [Definition.t()]
   def definitions(source_or_ast) do
     source_or_ast

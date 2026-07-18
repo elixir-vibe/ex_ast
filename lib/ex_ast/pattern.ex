@@ -696,21 +696,26 @@ defmodule ExAST.Pattern do
 
   defp call_candidate?({:|>, _, [_left, {{:., _, [_target, call_name]}, _, args}]}, name, arities)
        when is_list(args),
-       do: Ident.equal?(call_name, name) and arity_candidate?(length(args) + 1, arities)
+       do: call_name_match?(call_name, name) and arity_candidate?(length(args) + 1, arities)
 
   defp call_candidate?({:|>, _, [_left, {call_name, _, args}]}, name, arities)
        when is_list(args),
-       do: Ident.equal?(call_name, name) and arity_candidate?(length(args) + 1, arities)
+       do: call_name_match?(call_name, name) and arity_candidate?(length(args) + 1, arities)
 
   defp call_candidate?({{:., _, [_target, call_name]}, _, args}, name, arities)
        when is_list(args),
-       do: Ident.equal?(call_name, name) and arity_candidate?(length(args), arities)
+       do: call_name_match?(call_name, name) and arity_candidate?(length(args), arities)
 
   defp call_candidate?({call_name, _, args}, name, arities)
        when is_list(args),
-       do: Ident.equal?(call_name, name) and arity_candidate?(length(args), arities)
+       do: call_name_match?(call_name, name) and arity_candidate?(length(args), arities)
 
   defp call_candidate?(_node, _name, _arities), do: false
+
+  # A wildcard callee name (`_` in `_(...)`/`_._(...)`) matches any call name;
+  # arity still filters candidates.
+  defp call_name_match?(call_name, name),
+    do: wildcard_name?(name) or Ident.equal?(call_name, name)
 
   defp contains_call_candidate?(node, name, arities) do
     call_candidate?(node, name, arities) or
@@ -789,6 +794,16 @@ defmodule ExAST.Pattern do
     end
   end
 
+  # Wildcard local call: `_(...)` matches any local/unqualified call. Remote
+  # calls (`_._(...)`), special forms, operators, and definitions are excluded
+  # so `_(...)` means "a local function call", not "any node".
+  defp do_match({shead, nil, sargs}, {:_, nil, pargs}, caps)
+       when is_list(sargs) and is_list(pargs) do
+    if is_atom(shead) and real_call_name?(shead),
+      do: do_match(sargs, pargs, caps),
+      else: :error
+  end
+
   # 3-tuple with same/equivalent head. Tagged source identifiers compare to
   # pattern atoms by string without interning source names.
   defp do_match({shead, nil, schild}, {phead, nil, pchild}, caps)
@@ -831,6 +846,9 @@ defmodule ExAST.Pattern do
       match_list_exact(source, pattern, caps)
     end
   end
+
+  # Wildcard atom: `_` in callee position (e.g. `_._(...)`) matches any atom.
+  defp do_match(_source, :_, caps), do: {:ok, caps}
 
   defp do_match(source, pattern, caps) when is_atom(pattern) do
     if Ident.equal?(source, pattern), do: {:ok, caps}, else: :error
@@ -898,6 +916,51 @@ defmodule ExAST.Pattern do
       _ -> false
     end
   end
+
+  # Word-shaped heads that are special forms/definitions/directives rather than
+  # function calls, so `_(...)` does not treat them as calls. Symbolic heads
+  # (`%{}`, `{}`, `.`, operators, `@`, ...) are already excluded by
+  # `regular_identifier?/1`, so only identifier-shaped forms need listing.
+  @non_call_heads ExAST.Symbols.definition_forms() ++
+                    [
+                      :__block__,
+                      :__aliases__,
+                      :when,
+                      :fn,
+                      :defmodule,
+                      :defdelegate,
+                      :defstruct,
+                      :defexception,
+                      :defguard,
+                      :defguardp,
+                      :defprotocol,
+                      :defimpl,
+                      :case,
+                      :cond,
+                      :if,
+                      :unless,
+                      :with,
+                      :for,
+                      :try,
+                      :receive,
+                      :quote,
+                      :unquote,
+                      :unquote_splicing,
+                      :super,
+                      :import,
+                      :alias,
+                      :require,
+                      :use
+                    ]
+
+  defp real_call_name?(name) when is_atom(name) do
+    name not in @non_call_heads and regular_identifier?(Atom.to_string(name))
+  end
+
+  defp regular_identifier?(<<first, rest::binary>>) when first in ?a..?z or first == ?_,
+    do: String.match?(rest, ~r/^[A-Za-z0-9_]*[?!]?$/)
+
+  defp regular_identifier?(_name), do: false
 
   defp bind(name, node, captures) do
     case Map.fetch(captures, name) do
