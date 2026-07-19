@@ -231,6 +231,101 @@ defmodule ExAST.PatternTest do
     end
   end
 
+  describe "structural patterns on = and <-" do
+    test "tuple on LHS of = (match operator)" do
+      assert {:ok, %{}} = match!("{:ok, val} = fetch(y)", "{:ok, _} = _")
+    end
+
+    test "tuple with capture on LHS of =" do
+      assert {:ok, caps} = match!("{:ok, val} = fetch(y)", "{:ok, x} = _")
+      assert Map.has_key?(caps, :x)
+    end
+
+    test "tuple as RHS value of =" do
+      assert {:ok, %{}} = match!("result = {:ok, val}", "_ = {:ok, _}")
+    end
+
+    test "3-tuple on LHS of =" do
+      assert {:ok, %{}} = match!("{:ok, a, b} = fetch(y)", "{:ok, _, _} = _")
+    end
+
+    test "list on LHS of =" do
+      assert {:ok, %{}} = match!("[h | t] = fetch(y)", "[_ | _] = _")
+    end
+
+    test "map on LHS of =" do
+      assert {:ok, %{}} = match!("%{a: v} = fetch(y)", "%{a: _} = _")
+    end
+
+    test "wildcard on LHS of =" do
+      assert {:ok, %{}} = match!("{:ok, val} = fetch(y)", "_ = _")
+    end
+
+    test "capture on LHS of =" do
+      assert {:ok, %{pat: _}} = match!("{:ok, val} = fetch(y)", "pat = _")
+    end
+
+    test "tuple on LHS of <- (with clause)" do
+      assert {:ok, %{}} =
+               match!(
+                 "with {:ok, val} <- fetch(x) do\n  val\nend",
+                 "with {:ok, _} <- _ do ... end"
+               )
+    end
+
+    test "tuple with capture on LHS of <-" do
+      assert {:ok, caps} =
+               match!(
+                 "with {:ok, val} <- fetch(x) do\n  val\nend",
+                 "with {:ok, x} <- _ do ... end"
+               )
+
+      assert Map.has_key?(caps, :x)
+    end
+
+    test "find_all: tuple on LHS of = (match operator)" do
+      source = """
+      def g(y) do
+        {:ok, val} = fetch(y)
+        val
+      end
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "{:ok, _} = _")
+    end
+
+    test "find_all: tuple on LHS of <- (with clause)" do
+      source = """
+      def f(x) do
+        with {:ok, val} <- fetch(x) do
+          val
+        end
+      end
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "with {:ok, _} <- _ do ... end")
+    end
+
+    test "find_all: tuple as RHS value of =" do
+      source = """
+      def g(y) do
+        result = {:ok, y}
+        result
+      end
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "_ = {:ok, _}")
+    end
+
+    test "tuple as a list element" do
+      assert {:ok, %{}} = match!("[{:ok, val}]", "[{:ok, _}]")
+    end
+
+    test "tuple as a call argument inside a list" do
+      assert {:ok, %{}} = match!("foo([{:ok, val}])", "foo([{:ok, _}])")
+    end
+  end
+
   describe "function definitions" do
     test "def with wildcards" do
       assert {:ok, %{}} =

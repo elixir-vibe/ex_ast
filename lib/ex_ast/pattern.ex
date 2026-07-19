@@ -837,6 +837,16 @@ defmodule ExAST.Pattern do
     end
   end
 
+  # Bare 2-tuple pattern vs a folded 2-element source tuple. A genuine 2-tuple
+  # in a list is indistinguishable from a keyword entry at parse time, so the
+  # pattern side keeps it bare while the source side folds it to the variadic
+  # `{:{}, _, [a, b]}` form. Bridge the two shapes here.
+  defp do_match({:{}, nil, [sa, sb]}, {pa, pb}, caps) do
+    with {:ok, caps} <- do_match(sa, pa, caps) do
+      do_match(sb, pb, caps)
+    end
+  end
+
   # 2-tuple (keyword pair, two-element tuple)
   defp do_match({sa, sb}, {pa, pb}, caps) do
     with {:ok, caps} <- do_match(sa, pa, caps) do
