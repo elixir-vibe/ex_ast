@@ -37,6 +37,8 @@ ExAST.Patcher.find_many(source,
   get_env: "@_ Application.get_env(_, _)",
   dbg_call: "dbg(expr)"
 )
+# same batch from the CLI — one boot, one parse per file:
+#   mix ex_ast.search -e "@_ Application.get_env(_, _)" -e "dbg(_)" lib/
 
 # Preview rewrites before applying patches
 ExAST.rewrite_plan(source, "dbg(expr)", "expr")

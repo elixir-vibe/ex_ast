@@ -297,4 +297,140 @@ defmodule Mix.Tasks.ExAst.SearchTest do
     assert output =~ "1 match(es)"
     assert output =~ "expr: value"
   end
+
+  describe "multiple -e patterns" do
+    @tag :tmp_dir
+    test "runs several patterns in one invocation, tagged", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "IO.inspect(value)\ndbg(other)\n")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["-e", "IO.inspect(_)", "-e", "dbg(_)", file])
+        end)
+
+      assert output =~ "[IO.inspect(_)] #{file}:1"
+      assert output =~ "[dbg(_)] #{file}:2"
+      assert output =~ "2 pattern(s), 2 match(es)"
+    end
+
+    @tag :tmp_dir
+    test "per-pattern filters do not cross-contaminate", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+
+      File.write!(file, """
+      def handle_call(_, _, _) do
+        Repo.get!(User, id)
+        IO.inspect(:in_call)
+      end
+
+      def other do
+        Repo.get!(Post, pid)
+        IO.inspect(:in_other)
+      end
+      """)
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", [
+            "-e",
+            "Repo.get!(_, _)",
+            "--inside",
+            "def handle_call(_, _, _) do _ end",
+            "-e",
+            "IO.inspect(_)",
+            "--not-inside",
+            "def handle_call(_, _, _) do _ end",
+            file
+          ])
+        end)
+
+      assert output =~ "[Repo.get!(_, _)] #{file}:2"
+      refute output =~ "[Repo.get!(_, _)] #{file}:7"
+      assert output =~ "[IO.inspect(_)] #{file}:8"
+      refute output =~ "[IO.inspect(_)] #{file}:3"
+    end
+
+    @tag :tmp_dir
+    test "--count reports a per-pattern tally plus total", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "IO.inspect(a)\ndbg(b)\n")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", [
+            "-e",
+            "IO.inspect(_)",
+            "-e",
+            "dbg(_)",
+            "-e",
+            "Enum.member?(_, _)",
+            file,
+            "--count"
+          ])
+        end)
+
+      assert output =~ "1\tIO.inspect(_)"
+      assert output =~ "1\tdbg(_)"
+      assert output =~ "0\tEnum.member?(_, _)"
+      assert output =~ "2 match(es) across 3 pattern(s)"
+    end
+
+    @tag :tmp_dir
+    test "--json includes the :pattern field", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "IO.inspect(value)\n")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["-e", "IO.inspect(expr)", file, "--json"])
+        end)
+
+      assert %{"count" => 1, "matches" => [%{"pattern" => "IO.inspect(expr)"}]} =
+               Jason.decode!(output)
+    end
+
+    @tag :tmp_dir
+    test "global flags after -e apply to the batch", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "import Enum\n\nmap(list, &(&1 + 1))\n")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["-e", "Enum.map(_, _)", file, "--expand-imports"])
+        end)
+
+      assert output =~ "1 pattern(s), 1 match(es)"
+    end
+
+    @tag :tmp_dir
+    test "raises when positional pattern is mixed with -e", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "IO.inspect(value)\n")
+
+      assert_raise Mix.Error, ~r/positional pattern with -e/, fn ->
+        Mix.Task.run("ex_ast.search", ["IO.inspect(_)", "-e", "dbg(_)", file])
+      end
+    end
+
+    @tag :tmp_dir
+    test "raises on duplicate pattern strings", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "IO.inspect(value)\n")
+
+      assert_raise Mix.Error, ~r/Duplicate pattern/, fn ->
+        Mix.Task.run("ex_ast.search", ["-e", "IO.inspect(_)", "-e", "IO.inspect(_)", file])
+      end
+    end
+
+    @tag :tmp_dir
+    test "raises when --count-by-file is combined with -e", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "IO.inspect(value)\n")
+
+      assert_raise Mix.Error, ~r/not supported with -e/, fn ->
+        Mix.Task.run("ex_ast.search", ["-e", "IO.inspect(_)", file, "--count-by-file"])
+      end
+    end
+  end
 end
