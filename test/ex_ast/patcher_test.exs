@@ -97,6 +97,53 @@ defmodule ExAST.PatcherTest do
     end
   end
 
+  describe "find_all/2 with piped calls (arity)" do
+    test "piped call matches only its normalized arity, not the raw RHS" do
+      assert [_] = Patcher.find_all("x |> f(a)", "f(_, _)")
+      assert Patcher.find_all("x |> f(a)", "f(_)") == []
+    end
+
+    test "piped 2-arg call matches normalized arity 3, not raw arity 2" do
+      assert [_] = Patcher.find_all("x |> f(a, b)", "f(_, _, _)")
+      assert Patcher.find_all("x |> f(a, b)", "f(_, _)") == []
+    end
+
+    test "un-piped call still matches its written arity" do
+      assert [_] = Patcher.find_all("f(a)", "f(_)")
+    end
+
+    test "nested call inside a piped RHS still matches" do
+      assert Patcher.find_all("x |> f(g(a))", "f(_)") == []
+      assert [_] = Patcher.find_all("x |> f(g(a))", "f(_, _)")
+      assert [_] = Patcher.find_all("x |> f(g(a))", "g(_)")
+    end
+
+    test "remote piped call matches only normalized arity" do
+      assert [_] = Patcher.find_all("x |> Enum.map(f)", "Enum.map(_, _)")
+      assert Patcher.find_all("x |> Enum.map(f)", "Enum.map(_)") == []
+    end
+
+    test "chained pipes match each normalized arity but no raw RHS" do
+      source = "a |> b(x) |> c(y)"
+      assert [_] = Patcher.find_all(source, "b(_, _)")
+      assert [_] = Patcher.find_all(source, "c(_, _)")
+      assert Patcher.find_all(source, "b(_)") == []
+      assert Patcher.find_all(source, "c(_)") == []
+    end
+  end
+
+  describe "find_many/2 with piped calls (arity)" do
+    test "piped call does not spuriously match a lower-arity pattern" do
+      matches =
+        Patcher.find_many("x |> Enum.map(f)", %{
+          low: "Enum.map(_)",
+          high: "Enum.map(_, _)"
+        })
+
+      assert Enum.map(matches, & &1.pattern) == [:high]
+    end
+  end
+
   describe "find_all/2 with list ellipsis patterns" do
     test "[...] matches any list, including empty" do
       assert [_] = Patcher.find_all("[1, 2, 3]", "[...]")

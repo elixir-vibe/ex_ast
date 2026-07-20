@@ -297,7 +297,7 @@ defmodule ExAST.Patcher do
   defp collect_matches(zipper, compiled_pattern, signature, alias_env, acc) do
     node = Zipper.node(zipper)
 
-    if Pattern.candidate?(node, signature) and not block_wrapped_child?(zipper, node) do
+    if Pattern.candidate?(node, signature) and not skip_node?(zipper, node) do
       collect_match(zipper, node, compiled_pattern, signature, alias_env, acc)
     else
       zipper |> Zipper.next() |> collect_matches(compiled_pattern, signature, alias_env, acc)
@@ -309,6 +309,14 @@ defmodule ExAST.Patcher do
   # and its inner child, and `Pattern.normalize/1` collapses the wrapper — so an
   # unguarded traversal matches the same source twice. Match only the wrapper
   # (its range spans the brackets/quotes) and skip the bare inner child.
+  #
+  # The right operand of `|>` is likewise not a real standalone node: the pipe
+  # node normalizes to the full call (piped arg prepended), so matching the raw
+  # RHS would yield a spurious lower-arity match (`x |> f(a)` matching `f(_)`).
+  defp skip_node?(zipper, node) do
+    block_wrapped_child?(zipper, node) or pipe_rhs_child?(zipper, node)
+  end
+
   defp block_wrapped_child?(zipper, node) do
     case Zipper.up(zipper) do
       nil ->
@@ -317,6 +325,19 @@ defmodule ExAST.Patcher do
       up ->
         case Zipper.node(up) do
           {:__block__, _meta, [^node]} -> true
+          _ -> false
+        end
+    end
+  end
+
+  defp pipe_rhs_child?(zipper, node) do
+    case Zipper.up(zipper) do
+      nil ->
+        false
+
+      up ->
+        case Zipper.node(up) do
+          {:|>, _meta, [_left, ^node]} -> true
           _ -> false
         end
     end
@@ -347,7 +368,7 @@ defmodule ExAST.Patcher do
     node = Zipper.node(zipper)
 
     candidates =
-      if block_wrapped_child?(zipper, node) do
+      if skip_node?(zipper, node) do
         []
       else
         Enum.filter(patterns, fn entry ->
