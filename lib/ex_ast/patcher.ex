@@ -297,10 +297,28 @@ defmodule ExAST.Patcher do
   defp collect_matches(zipper, compiled_pattern, signature, alias_env, acc) do
     node = Zipper.node(zipper)
 
-    if Pattern.candidate?(node, signature) do
+    if Pattern.candidate?(node, signature) and not block_wrapped_child?(zipper, node) do
       collect_match(zipper, node, compiled_pattern, signature, alias_env, acc)
     else
       zipper |> Zipper.next() |> collect_matches(compiled_pattern, signature, alias_env, acc)
+    end
+  end
+
+  # Sourceror wraps literals (and single-expression bodies) in a one-child
+  # `__block__` that carries token/delimiter metadata. The zipper visits both it
+  # and its inner child, and `Pattern.normalize/1` collapses the wrapper — so an
+  # unguarded traversal matches the same source twice. Match only the wrapper
+  # (its range spans the brackets/quotes) and skip the bare inner child.
+  defp block_wrapped_child?(zipper, node) do
+    case Zipper.up(zipper) do
+      nil ->
+        false
+
+      up ->
+        case Zipper.node(up) do
+          {:__block__, _meta, [^node]} -> true
+          _ -> false
+        end
     end
   end
 
@@ -329,9 +347,13 @@ defmodule ExAST.Patcher do
     node = Zipper.node(zipper)
 
     candidates =
-      Enum.filter(patterns, fn entry ->
-        Pattern.candidate?(node, many_entry_signature(entry))
-      end)
+      if block_wrapped_child?(zipper, node) do
+        []
+      else
+        Enum.filter(patterns, fn entry ->
+          Pattern.candidate?(node, many_entry_signature(entry))
+        end)
+      end
 
     if candidates == [] do
       zipper

@@ -650,6 +650,8 @@ defmodule ExAST.Pattern do
     end
   end
 
+  defp nested_call_signature({:..., _meta, _args}), do: :unknown
+
   defp nested_call_signature({{:., nil, [_target, name]}, nil, args})
        when is_atom(name) and is_list(args),
        do: {:call, name, arity_signature(args)}
