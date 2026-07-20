@@ -260,6 +260,28 @@ defmodule Mix.Tasks.ExAst.SearchTest do
       assert %{"count" => 1, "matches" => [%{"captures" => %{"expr" => "value"}}]} =
                Jason.decode!(output)
     end
+
+    @tag :tmp_dir
+    test "--count-by-file reports per-file counts", %{tmp_dir: dir} do
+      a = Path.join(dir, "a.ex")
+      b = Path.join(dir, "b.ex")
+      File.write!(a, "IO.inspect(1)\nIO.inspect(2)\n")
+      File.write!(b, "IO.inspect(3)\n")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["IO.inspect(_)", a, b, "--count-by-file"])
+        end)
+
+      assert output =~ "2\t#{a}"
+      assert output =~ "1\t#{b}"
+      assert output =~ "3 match(es) in 2 file(s)"
+
+      lines = String.split(output, "\n", trim: true)
+
+      assert Enum.find_index(lines, &(&1 == "2\t#{a}")) <
+               Enum.find_index(lines, &(&1 == "1\t#{b}"))
+    end
   end
 
   @tag :tmp_dir

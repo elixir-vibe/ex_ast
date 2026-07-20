@@ -13,6 +13,7 @@ Search files for AST pattern matches. PATH can be a file, directory, or glob.
 | Flag | Meaning |
 |------|---------|
 | `--count` | Print match count only |
+| `--count-by-file` | Print per-file match counts, most matches first |
 | `--limit N` | Stop after N matches |
 | `--allow-broad` | Allow patterns like `_` that match everything |
 | `--expand-imports` | Resolve `import Mod` to `Mod`'s real exports, scoped per module, so `map(a, b)` matches `Mod.map(_, _)`. Requires `Mod` to be loadable |
@@ -66,6 +67,9 @@ mix ex_ast.search --inside 'defp _ do _ end' 'Repo.get!(_, _)'
 
 # Count matches
 mix ex_ast.search --count 'dbg(_)' lib/
+
+# Per-file match counts, most matches first
+mix ex_ast.search 'IO.inspect(_)' lib/ --count-by-file
 
 # Resolve a bare `import Enum` to its real exports
 mix ex_ast.search 'Enum.map(_, _)' lib/ --expand-imports

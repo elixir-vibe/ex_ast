@@ -10,6 +10,7 @@ defmodule Mix.Tasks.ExAst.Search do
   ## Options
 
     * `--count` — only print the number of matches
+    * `--count-by-file` — print per-file match counts, most matches first
     * `--limit n` — stop after returning this many matches
     * `--allow-broad` — allow unbounded broad searches like `_`
     * `--expand-imports` — resolve bare `import Mod` (and `import Mod,
@@ -73,6 +74,7 @@ defmodule Mix.Tasks.ExAst.Search do
         strict:
           [
             count: :boolean,
+            count_by_file: :boolean,
             limit: :integer,
             allow_broad: :boolean,
             format: :string,
@@ -98,13 +100,21 @@ defmodule Mix.Tasks.ExAst.Search do
     search_pattern =
       SelectorOptions.pattern(pattern, opts, &validate_pattern!/1, [
         :count,
+        :count_by_file,
         :limit,
         :allow_broad
       ])
 
     search_opts =
       opts
-      |> SelectorOptions.where_opts([:count, :limit, :allow_broad, :format, :json])
+      |> SelectorOptions.where_opts([
+        :count,
+        :count_by_file,
+        :limit,
+        :allow_broad,
+        :format,
+        :json
+      ])
       |> Keyword.merge(Keyword.take(opts, [:limit, :allow_broad, :expand_imports]))
 
     results = ExAST.search(paths, search_pattern, search_opts)
@@ -113,6 +123,9 @@ defmodule Mix.Tasks.ExAst.Search do
       cond do
         json?(opts) ->
           JSON.print(%{matches: results, count: length(results)})
+
+        opts[:count_by_file] ->
+          print_count_by_file(results)
 
         opts[:count] ->
           Output.puts(length(results))
@@ -129,6 +142,16 @@ defmodule Mix.Tasks.ExAst.Search do
   rescue
     e in [SyntaxError, TokenMissingError, MismatchedDelimiterError] ->
       Mix.raise("Invalid pattern: #{Exception.message(e)}")
+  end
+
+  defp print_count_by_file(results) do
+    counts =
+      results
+      |> Enum.frequencies_by(& &1.file)
+      |> Enum.sort_by(fn {_file, count} -> -count end)
+
+    Enum.each(counts, fn {file, count} -> Output.puts("#{count}\t#{file}") end)
+    Output.puts("\n#{length(results)} match(es) in #{length(counts)} file(s)")
   end
 
   defp json?(opts), do: opts[:json] || opts[:format] == "json"
