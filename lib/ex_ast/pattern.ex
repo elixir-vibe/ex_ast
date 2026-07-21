@@ -917,15 +917,20 @@ defmodule ExAST.Pattern do
     end
   end
 
+  # Word operators (`and`, `or`, `not`, `in`, `when`) are identifier-shaped, so
+  # they pass `regular_identifier?/1` and must be excluded explicitly; symbolic
+  # operators (`&&`, `||`, `++`, ...) are already rejected there.
+  @word_operators [:and, :or, :not, :in, :when]
+
   # Word-shaped heads that are special forms/definitions/directives rather than
   # function calls, so `_(...)` does not treat them as calls. Symbolic heads
   # (`%{}`, `{}`, `.`, operators, `@`, ...) are already excluded by
   # `regular_identifier?/1`, so only identifier-shaped forms need listing.
   @non_call_heads ExAST.Symbols.definition_forms() ++
+                    @word_operators ++
                     [
                       :__block__,
                       :__aliases__,
-                      :when,
                       :fn,
                       :defmodule,
                       :defdelegate,

@@ -219,6 +219,13 @@ defmodule ExAST.PatternTest do
     test "_(...) matches a piped local call" do
       assert [_ | _] = ExAST.Patcher.find_all("def run, do: x |> transform()", "_(...)")
     end
+
+    test "_(...) does not match word operators" do
+      assert [] = ExAST.Patcher.find_all("left and right", "_(...)")
+      assert [] = ExAST.Patcher.find_all("left or right", "_(...)")
+      assert [] = ExAST.Patcher.find_all("not value", "_(...)")
+      assert [] = ExAST.Patcher.find_all("value in list", "_(...)")
+    end
   end
 
   describe "pipes" do
