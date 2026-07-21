@@ -640,6 +640,10 @@ defmodule ExAST.Pattern do
   defp signature({{:., nil, [_target, name]}, nil, args}) when is_atom(name) and is_list(args),
     do: {:call, name, arity_signature(args)}
 
+  # Maps match a subset of their keys, so entry count must not gate candidacy;
+  # filter only to map nodes of any size.
+  defp signature({:%{}, nil, _args}), do: {:call, :%{}, :any}
+
   defp signature({name, nil, args}) when is_atom(name) and is_list(args),
     do: {:call, name, arity_signature(args)}
 
@@ -655,6 +659,8 @@ defmodule ExAST.Pattern do
   defp nested_call_signature({{:., nil, [_target, name]}, nil, args})
        when is_atom(name) and is_list(args),
        do: {:call, name, arity_signature(args)}
+
+  defp nested_call_signature({:%{}, _meta, _args}), do: {:call, :%{}, :any}
 
   defp nested_call_signature({name, nil, args}) when is_atom(name) and is_list(args),
     do: {:call, name, arity_signature(args)}

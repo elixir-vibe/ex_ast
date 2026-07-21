@@ -182,9 +182,9 @@ defmodule ExAST.PatternTest do
   end
 
   describe "map and struct subset matching via search" do
-    test "a plain map pattern matches only the exact key set" do
+    test "a plain map pattern matches any map containing that entry" do
       src = "one = %{a: 1}\ntwo = %{a: 1, b: 2}\n"
-      assert [%{}] = ExAST.Patcher.find_all(src, "%{a: 1}")
+      assert [%{}, %{}] = ExAST.Patcher.find_all(src, "%{a: 1}")
     end
 
     test "%{..., k: v} matches any map containing that entry" do
