@@ -847,6 +847,14 @@ defmodule ExAST.Pattern do
     end
   end
 
+  # Reverse of the above: a quoted source keeps a genuine 2-tuple bare, while a
+  # standalone pattern tuple folds to `{:{}, _, [a, b]}`. Bridge that shape too.
+  defp do_match({sa, sb}, {:{}, nil, [pa, pb]}, caps) do
+    with {:ok, caps} <- do_match(sa, pa, caps) do
+      do_match(sb, pb, caps)
+    end
+  end
+
   # 2-tuple (keyword pair, two-element tuple)
   defp do_match({sa, sb}, {pa, pb}, caps) do
     with {:ok, caps} <- do_match(sa, pa, caps) do

@@ -146,6 +146,14 @@ defmodule ExAST.PatternTest do
       assert {:ok, caps} = match!("{:noreply, []}", "{:noreply, state}")
       assert Map.has_key?(caps, :state)
     end
+
+    test "quoted source 2-tuple against quoted pattern" do
+      assert {:ok, %{}} = Pattern.match(quote(do: {:ok, value}), quote(do: {:ok, _}))
+
+      assert {:ok, %{v: _}} = Pattern.match(quote(do: {:ok, value}), quote(do: {:ok, v}))
+
+      assert :error = Pattern.match(quote(do: :error), quote(do: {:ok, _}))
+    end
   end
 
   describe "tuple ellipsis via find_all (all arities)" do
