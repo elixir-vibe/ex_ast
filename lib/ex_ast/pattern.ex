@@ -26,6 +26,15 @@ defmodule ExAST.Pattern do
       Pattern.match(node, "IO.inspect(...)")       # any arity
       Pattern.match(node, "foo(first, ...)")        # 1+ args, capture first
       Pattern.match(node, "def foo(_) do ... end")  # any body
+
+  Constrain a definition by argument count with `name/arity`. Like the
+  parenthesized head form, it needs a body clause: `def name/2 do ... end`
+  mirrors `def name(_, _) do ... end`. The name is captured (or `_` to ignore
+  it) and the arity is an integer or `_` for any:
+
+      Pattern.match(node, "def name/2 do ... end")  # 2-arity def, capture name
+      Pattern.match(node, "def _/0 do ... end")     # any 0-arity def
+      Pattern.match(node, "def name/_ do ... end")  # any arity, capture name
   """
 
   @type captures :: %{atom() => term()}
@@ -933,13 +942,10 @@ defmodule ExAST.Pattern do
   defp def_head_signature(_head), do: :error
 
   defp match_def_name(name, {pname, nil, nil}, caps) when is_atom(pname) do
-    if wildcard_name?(pname), do: {:ok, caps}, else: bind(pname, name_atom_value(name), caps)
+    if wildcard_name?(pname), do: {:ok, caps}, else: bind(pname, {name, nil, nil}, caps)
   end
 
   defp match_def_name(_name, _name_pat, _caps), do: :error
-
-  defp name_atom_value(name) when is_atom(name), do: name
-  defp name_atom_value(name), do: Ident.name(name)
 
   defp match_def_arity(arity, arity, caps) when is_integer(arity), do: {:ok, caps}
   defp match_def_arity(_arity, {:_, nil, nil}, caps), do: {:ok, caps}

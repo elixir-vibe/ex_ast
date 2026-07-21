@@ -195,15 +195,19 @@ defmodule ExAST.PatternTest do
     """
 
     test "def name/0 matches only zero-arity defs" do
-      assert [%{captures: %{name: :id}}] = find(@fixture, "def name/0 do ... end")
+      assert [%{captures: %{name: {:id, nil, nil}}}] = find(@fixture, "def name/0 do ... end")
     end
 
     test "def name/2 matches only two-arity defs" do
-      assert [%{captures: %{name: :apply}}] = find(@fixture, "def name/2 do ... end")
+      assert [%{captures: %{name: {:apply, nil, nil}}}] = find(@fixture, "def name/2 do ... end")
     end
 
     test "def name/_ matches any arity and captures the name" do
-      names = @fixture |> find("def name/_ do ... end") |> Enum.map(& &1.captures.name)
+      names =
+        @fixture
+        |> find("def name/_ do ... end")
+        |> Enum.map(fn %{captures: %{name: {n, nil, nil}}} -> n end)
+
       assert Enum.sort(names) == [:apply, :id]
     end
 
@@ -213,25 +217,48 @@ defmodule ExAST.PatternTest do
     end
 
     test "empty-paren zero-arity source matches def name/0" do
-      assert [%{captures: %{name: :ping}}] =
+      assert [%{captures: %{name: {:ping, nil, nil}}}] =
                find("def ping(), do: :pong", "def name/0 do ... end")
     end
 
     test "arity syntax respects guards" do
       source = "def clamp(x) when x > 0, do: x"
-      assert [%{captures: %{name: :clamp}}] = find(source, "def name/1 do ... end")
+      assert [%{captures: %{name: {:clamp, nil, nil}}}] = find(source, "def name/1 do ... end")
       assert [] = find(source, "def name/2 do ... end")
     end
 
     test "arity syntax matches defmacro heads" do
-      assert [%{captures: %{name: :m}}] =
+      assert [%{captures: %{name: {:m, nil, nil}}}] =
                find("defmacro m(a, b), do: {a, b}", "defmacro name/2 do ... end")
     end
 
     test "arity syntax respects the definition kind" do
       source = "defp helper(x), do: x"
-      assert [%{captures: %{name: :helper}}] = find(source, "defp name/1 do ... end")
+      assert [%{captures: %{name: {:helper, nil, nil}}}] = find(source, "defp name/1 do ... end")
       assert [] = find(source, "def name/1 do ... end")
+    end
+
+    test "with a body, arity syntax matches the same defs as wildcard args" do
+      arity = @fixture |> find("def name/2 do ... end") |> Enum.map(& &1.node)
+      wildcard = @fixture |> find("def _(_, _) do ... end") |> Enum.map(& &1.node)
+      assert wildcard != []
+      assert arity == wildcard
+    end
+
+    test "short form requires a body, just like the paren form" do
+      assert [] = find(@fixture, "def name/2")
+      assert [] = find(@fixture, "def _(_, _)")
+    end
+
+    test "bare short form matches a bodyless def, like the bare paren form" do
+      source = "def foo(a, b)"
+      assert [%{captures: %{name: {:foo, nil, nil}}}] = find(source, "def name/2")
+      assert [_] = find(source, "def _(_, _)")
+    end
+
+    test "name capture supports repeated captures in the body" do
+      assert [_] = find("def foo(foo), do: foo", "def name/1 do name end")
+      assert [] = find("def foo(bar), do: bar", "def name/1 do name end")
     end
   end
 
