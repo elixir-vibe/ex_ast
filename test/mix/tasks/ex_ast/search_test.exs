@@ -432,5 +432,54 @@ defmodule Mix.Tasks.ExAst.SearchTest do
         Mix.Task.run("ex_ast.search", ["-e", "IO.inspect(_)", file, "--count-by-file"])
       end
     end
+
+    @tag :tmp_dir
+    test "raises when a selector filter precedes the first -e", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "IO.inspect(value)\n")
+
+      assert_raise Mix.Error, ~r/before the first -e/, fn ->
+        Mix.Task.run("ex_ast.search", [
+          "--inside",
+          "def _ do ... end",
+          "-e",
+          "IO.inspect(_)",
+          file
+        ])
+      end
+    end
+
+    @tag :tmp_dir
+    test "preserves path argument order within a segment", %{tmp_dir: dir} do
+      a = Path.join(dir, "a.ex")
+      b = Path.join(dir, "b.ex")
+      File.write!(a, "IO.inspect(1)\n")
+      File.write!(b, "IO.inspect(2)\n")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["-e", "IO.inspect(_)", a, b, "--limit", "1"])
+        end)
+
+      assert output =~ "#{a}:1"
+      refute output =~ "#{b}:1"
+    end
+
+    @tag :tmp_dir
+    test "handles long patterns", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "IO.inspect(value)\n")
+
+      pattern = "[" <> Enum.map_join(1..100, ", ", fn _ -> "_" end) <> "]"
+      assert byte_size(pattern) > 255
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["-e", pattern, file, "--count"])
+        end)
+
+      assert output =~ "0\t#{pattern}"
+      assert output =~ "across 1 pattern(s)"
+    end
   end
 end

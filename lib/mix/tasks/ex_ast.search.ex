@@ -146,6 +146,8 @@ defmodule Mix.Tasks.ExAst.Search do
     {global_opts, head_positional, _} =
       OptionParser.parse(head, strict: @global_switches ++ SelectorOptions.switches())
 
+    reject_head_selector_flags!(global_opts)
+
     if head_positional != [] do
       Mix.raise(
         "Cannot mix a positional pattern with -e; pass every pattern via -e " <>
@@ -162,14 +164,34 @@ defmodule Mix.Tasks.ExAst.Search do
     reject_multi_unsupported!(global_opts)
     paths = if paths == [], do: ["lib/"], else: paths
 
-    named_patterns = build_named_patterns!(patterns)
+    {named_patterns, key_to_str} = build_named_patterns!(patterns)
     pattern_strs = Enum.map(patterns, & &1.pattern)
 
     search_opts = Keyword.take(global_opts, [:limit, :allow_broad, :expand_imports])
 
     results = ExAST.search_many(paths, named_patterns, search_opts)
 
-    render_many(results, pattern_strs, global_opts)
+    render_many(results, pattern_strs, key_to_str, global_opts)
+  end
+
+  defp reject_head_selector_flags!(global_opts) do
+    case Keyword.take(global_opts, Keyword.keys(SelectorOptions.switches())) do
+      [] ->
+        :ok
+
+      stray ->
+        flags = stray |> Keyword.keys() |> Enum.map_join(", ", &flag_name/1)
+
+        Mix.raise(
+          "Selector filter #{flags} appears before the first -e; selector filters " <>
+            "bind to the preceding -e pattern, so put them after the -e they apply to"
+        )
+    end
+  end
+
+  defp flag_name(key) do
+    dashed = String.replace("#{key}", "_", "-")
+    "--" <> dashed
   end
 
   defp segment_argv(args) do
@@ -206,25 +228,29 @@ defmodule Mix.Tasks.ExAst.Search do
         selector = SelectorOptions.scoped_pattern(pattern, filter_opts, &validate_pattern!/1)
 
         {[%{pattern: pattern, selector: selector} | compiled], global_opts ++ seg_globals,
-         positional ++ paths}
+         paths ++ positional}
       end)
 
-    {Enum.reverse(compiled), global_opts, Enum.reverse(paths)}
+    {Enum.reverse(compiled), global_opts, paths}
   end
 
   defp build_named_patterns!(compiled) do
-    Enum.reduce(compiled, [], fn %{pattern: str, selector: selector}, acc ->
-      key = String.to_atom(str)
+    {named, key_to_str, _seen} =
+      compiled
+      |> Enum.with_index()
+      |> Enum.reduce({[], %{}, MapSet.new()}, fn {%{pattern: str, selector: selector}, index},
+                                                 {named, key_to_str, seen} ->
+        if MapSet.member?(seen, str) do
+          Mix.raise(
+            "Duplicate pattern #{inspect(str)}; each -e must have a distinct pattern string"
+          )
+        end
 
-      if Keyword.has_key?(acc, key) do
-        Mix.raise(
-          "Duplicate pattern #{inspect(str)}; each -e must have a distinct pattern string"
-        )
-      end
+        key = :"pattern_#{index}"
+        {[{key, selector} | named], Map.put(key_to_str, key, str), MapSet.put(seen, str)}
+      end)
 
-      [{key, selector} | acc]
-    end)
-    |> Enum.reverse()
+    {Enum.reverse(named), key_to_str}
   end
 
   defp reject_multi_unsupported!(opts) do
@@ -233,7 +259,9 @@ defmodule Mix.Tasks.ExAst.Search do
     end
   end
 
-  defp render_many(results, pattern_strs, opts) do
+  defp render_many(results, pattern_strs, key_to_str, opts) do
+    results = Enum.map(results, &%{&1 | pattern: Map.fetch!(key_to_str, &1.pattern)})
+
     Output.with_stdout(fn ->
       cond do
         json?(opts) ->
