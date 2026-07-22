@@ -3,8 +3,9 @@
 Search, replace, and diff Elixir code by AST pattern.
 
 Patterns are plain Elixir — variables capture, `_` is a wildcard,
-maps and structs match partially, pipes are normalized. `...` matches the rest —
-extra call arguments, a block body, or any other map/struct entries —
+maps and structs match partially, pipes are normalized. `...` matches
+variable-length portions of calls, lists, tuples, and blocks, and can explicitly
+mark the rest of a map or struct.
 `^name` matches a literal variable name, `name`/`fun`/`function` can capture
 function names in definitions, and `fun`/`function` can capture call names.
 `_(...)` and `_._(...)` match any local or remote call. No regex, no custom DSL.
@@ -60,7 +61,7 @@ from("def _ do ... end")
 
 ```elixir
 def deps do
-  [{:ex_ast, "~> 0.12", only: [:dev, :test], runtime: false}]
+  [{:ex_ast, "~> 0.13", only: [:dev, :test], runtime: false}]
 end
 ```
 
@@ -83,17 +84,19 @@ end
 Enum.map(_, _)
 Logger.info(...)
 
-# Ellipsis as a sub-pattern — pin `...`/`[...]` to a position
-def _ do [...] end          # functions whose body is a list literal
-{:ok, [...]}                # an :ok tuple wrapping any list
-[x, y, z, ...]              # capture leading elements; ... absorbs the rest
-[..., y, z]                 # capture trailing elements; ... absorbs the rest
+# Ellipsis inside lists
+[...]                         # any list, including empty
+[x, y, z, ...]               # capture leading elements; ... absorbs the rest
+[..., y, z]                  # capture trailing elements; ... absorbs the rest
+def _ do [...] end           # functions whose body is a list literal
 
 # Definitions and function-name captures
 def handle_call(msg, _, state) do _ end
-def name(_, _) do ... end      # captures the definition name
-Repo.fun(changeset)            # captures remote call names like insert/update
-fun(changeset)                 # captures local call names
+def name(_, _) do ... end       # captures the definition name
+def name/2 do ... end           # capture names of two-argument definitions
+defp _/_ do ... end             # any private definition, any arity
+Repo.fun(changeset)             # captures remote call names like insert/update
+fun(changeset)                  # captures local call names
 
 # Wildcard callees — match any call
 _(...)                         # any local call
@@ -111,11 +114,13 @@ a = Repo.get!(_, _); Repo.delete(a)
 
 # Tuples, structs, maps
 {:ok, result}
-%User{role: :admin}          # struct with at least this field
-%Struct{...}                 # any struct of that type
-%{name: name}                # map with at least this key
-%{..., name: name}           # same subset match, with explicit rest
-%{...}                       # any map, including empty
+{:ok, ...}                  # tuples beginning with :ok, at any remaining arity
+{first, ..., last}          # capture both tuple edges
+%User{role: :admin}         # struct with at least this field
+%Struct{...}                # any struct of that type
+%{name: name}               # map with at least this key
+%{..., name: name}          # same subset match, with explicit rest
+%{...}                      # any map, including empty
 
 # Directives and attributes
 use GenServer
@@ -160,7 +165,7 @@ Use these terms and facts to retrieve candidates, then verify with
 ## Limitations
 
 - Alias/import expansion is syntax-aware, not full semantic macro expansion. A bare `import Mod` is not expanded by default; pass `expand_imports: true` (or `--expand-imports`) to resolve it from `Mod`'s real exports
-- Function-name placeholders are intentionally limited: definitions use `name`, `fun`, or `function`; call heads use `fun` or `function`
+- Capturing function-name placeholders are intentionally limited: definitions use `name`, `fun`, or `function`; call heads use `fun` or `function`. Use `_` for a non-capturing wildcard callee
 - Multi-node patterns require contiguous statements
 - Replacement formatting uses `Macro.to_string/1`; pass `format: true` or run `mix format` after
 

@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+## 0.13.0 - 2026-07-22
+
+### Added
+
+- Extended ellipsis patterns to lists and tuples, including leading, trailing,
+  and middle captures, and added explicit `%{...}` / `%Struct{...}` rest
+  patterns for maps and structs.
+- Added wildcard callee patterns: `_(...)` for any local call, `_._(...)` for
+  any remote call, and module- or function-specific forms such as
+  `Repo._(...)` and `_.section(...)`.
+- Added `name/arity` definition patterns such as `def name/2 do ... end` and
+  `defp _/_ do ... end`.
+- Added repeatable `-e` / `--pattern` options to `mix ex_ast.search` for running
+  multiple tagged patterns in one file traversal, with per-pattern selector
+  filters, counts, and JSON output.
+- Added `--count-by-file` to `mix ex_ast.search`.
+
+### Changed
+
+- Map patterns now use subset matching consistently in top-level and nested
+  searches.
+
+### Fixed
+
+- Piped calls no longer also match the lower arity of their unnormalized
+  right-hand side.
+- Literal lists, tuples, atoms, strings, and numbers wrapped by Sourceror are no
+  longer reported twice during searches.
+- Two-element tuple patterns now match consistently in call arguments, list
+  elements, match and `with` clauses, and ordinary quoted AST sources.
+
 ## 0.12.10
 
 ### Added

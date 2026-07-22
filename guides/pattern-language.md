@@ -8,7 +8,7 @@ Patterns are valid Elixir expressions given as strings or `quote` blocks.
 |--------|---------|
 | `_` or `_name` | Wildcard — matches any node, not captured |
 | `name`, `expr`, `x` | Capture — matches any node, bound by name |
-| `...` | Ellipsis — matches zero or more nodes (args, list items, block body) |
+| `...` | Ellipsis — matches a variable-length remainder in calls, lists, tuples, blocks, maps, and structs |
 | Everything else | Literal — must match exactly |
 
 Repeated variable names require the same value at every position:
@@ -23,6 +23,34 @@ source = """
 ExAST.Patcher.find_all(source, "{a, a}")
 #=> matches line 1 only
 ```
+
+## Definition names and arity
+
+Use `name`, `fun`, or `function` to capture a definition name. Add `/N` to
+constrain the definition by arity, or `/_` to accept any arity:
+
+```elixir
+"def name/2 do ... end"   # any two-argument def, capturing its name
+"def _/0 do ... end"      # any zero-argument def, without a capture
+"defp name/_ do ... end"  # any private def, capturing its name
+```
+
+Like parenthesized definition patterns, arity patterns must include a matching
+body clause when the source definition has one.
+
+## Wildcard callees
+
+A wildcard can stand in for the name of a local or remote call:
+
+```elixir
+"_(...)"          # any local call
+"_._(...)"        # any remote call
+"_.section(...)"  # section/any-arity on any module
+"Repo._(...)"     # any call on Repo
+```
+
+`_(...)` only matches calls; definitions, control-flow forms, and operators are
+excluded.
 
 ## Pipes
 
@@ -42,19 +70,34 @@ ExAST.Patcher.find_all(source, "_ |> Enum.map(_)")
 #=> 2 matches (same results)
 ```
 
+Arity checks use the normalized call. For example, `x |> Map.get(key, default)`
+matches `Map.get(_, _, _)`, not `Map.get(_, _)`.
+
 ## Ellipsis
 
-`...` matches zero or more nodes in three positions:
+`...` absorbs a variable-length portion of calls, lists, tuples, and blocks:
 
 ```elixir
-# Any arity
-"IO.inspect(...)"
+"IO.inspect(...)"             # any call arity
+"foo(first, ...)"             # one or more args; capture the first
+"def run(_) do ... end"       # any function body
 
-# 1+ args, capture first
-"foo(first, ...)"
+"[...]"                       # any list, including empty
+"[first, ...]"                # capture the leading item
+"[..., last]"                 # capture the trailing item
+"[first, ..., last]"          # capture both list edges
 
-# Any function body
-"def run(_) do ... end"
+"{...}"                       # any tuple arity
+"{:ok, ...}"                  # any tuple beginning with :ok
+"{first, ..., last}"          # capture both tuple edges
+```
+
+It can also make the remainder explicit in map and struct patterns:
+
+```elixir
+"%{...}"
+"%{..., role: :admin}"
+"%User{...}"
 ```
 
 ## Structs and maps
@@ -62,9 +105,19 @@ ExAST.Patcher.find_all(source, "_ |> Enum.map(_)")
 Partial matching — only specified keys must be present:
 
 ```elixir
-source = "%User{name: \"Alice\", age: 30, role: :admin}"
+source = """
+%User{name: "Alice", age: 30, role: :admin}
+%{name: "Alice", age: 30, role: :admin}
+"""
 
 ExAST.Patcher.find_all(source, "%User{role: role}")
+#=> [%{captures: %{role: :admin}}]
+
+ExAST.Patcher.find_all(source, "%{role: role}")
+#=> [%{captures: %{role: :admin}}]
+
+# Explicit `...` is accepted but not required for subset matching:
+ExAST.Patcher.find_all(source, "%{..., role: role}")
 #=> [%{captures: %{role: :admin}}]
 ```
 

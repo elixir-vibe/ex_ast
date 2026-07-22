@@ -6,7 +6,7 @@ Add ExAST as a dev dependency:
 
 ```elixir
 def deps do
-  [{:ex_ast, "~> 0.12", only: [:dev, :test], runtime: false}]
+  [{:ex_ast, "~> 0.13", only: [:dev, :test], runtime: false}]
 end
 ```
 
