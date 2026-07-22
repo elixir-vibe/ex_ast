@@ -26,6 +26,15 @@ defmodule ExAST.Pattern do
       Pattern.match(node, "IO.inspect(...)")       # any arity
       Pattern.match(node, "foo(first, ...)")        # 1+ args, capture first
       Pattern.match(node, "def foo(_) do ... end")  # any body
+
+  Constrain a definition by argument count with `name/arity`. Like the
+  parenthesized head form, it needs a body clause: `def name/2 do ... end`
+  mirrors `def name(_, _) do ... end`. The name is captured (or `_` to ignore
+  it) and the arity is an integer or `_` for any:
+
+      Pattern.match(node, "def name/2 do ... end")  # 2-arity def, capture name
+      Pattern.match(node, "def _/0 do ... end")     # any 0-arity def
+      Pattern.match(node, "def name/_ do ... end")  # any arity, capture name
   """
 
   @type captures :: %{atom() => term()}
@@ -816,6 +825,20 @@ defmodule ExAST.Pattern do
     end
   end
 
+  # Arity-constrained definition head: `def name/2`, `def _/0`, `def name/_`.
+  # The name part is a wildcard (`_`) or a capture bound to the function name
+  # atom; the arity part is an integer or `_` for any arity.
+  defp do_match(
+         {form, nil, [shead | srest]},
+         {form, nil, [{:/, nil, [name_pat, arity_pat]} | prest]},
+         caps
+       )
+       when form in [:def, :defp, :defmacro, :defmacrop] do
+    with {:ok, caps} <- match_def_head_arity(shead, name_pat, arity_pat, caps) do
+      do_match(srest, prest, caps)
+    end
+  end
+
   # Wildcard local call: `_(...)` matches any local/unqualified call. Remote
   # calls (`_._(...)`), special forms, operators, and definitions are excluded
   # so `_(...)` means "a local function call", not "any node".
@@ -956,6 +979,35 @@ defmodule ExAST.Pattern do
       _ -> false
     end
   end
+
+  # --- Definition arity matching ---
+
+  defp match_def_head_arity(shead, name_pat, arity_pat, caps) do
+    case def_head_signature(shead) do
+      {:ok, name, arity} ->
+        with {:ok, caps} <- match_def_name(name, name_pat, caps) do
+          match_def_arity(arity, arity_pat, caps)
+        end
+
+      :error ->
+        :error
+    end
+  end
+
+  defp def_head_signature({:when, nil, [head | _guards]}), do: def_head_signature(head)
+  defp def_head_signature({name, nil, nil}), do: {:ok, name, 0}
+  defp def_head_signature({name, nil, args}) when is_list(args), do: {:ok, name, length(args)}
+  defp def_head_signature(_head), do: :error
+
+  defp match_def_name(name, {pname, nil, nil}, caps) when is_atom(pname) do
+    if wildcard_name?(pname), do: {:ok, caps}, else: bind(pname, {name, nil, nil}, caps)
+  end
+
+  defp match_def_name(_name, _name_pat, _caps), do: :error
+
+  defp match_def_arity(arity, arity, caps) when is_integer(arity), do: {:ok, caps}
+  defp match_def_arity(_arity, {:_, nil, nil}, caps), do: {:ok, caps}
+  defp match_def_arity(_arity, _arity_pat, _caps), do: :error
 
   # Word operators (`and`, `or`, `not`, `in`, `when`) are identifier-shaped, so
   # they pass `regular_identifier?/1` and must be excluded explicitly; symbolic
