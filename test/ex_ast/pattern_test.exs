@@ -368,6 +368,53 @@ defmodule ExAST.PatternTest do
     end
   end
 
+  describe "wildcard callees" do
+    test "_(...) matches any local call, not special forms" do
+      source = """
+      defmodule M do
+        def run, do: grant(:admin)
+      end
+      """
+
+      assert [%{node: {:grant, _, _}}] = ExAST.Patcher.find_all(source, "_(...)")
+    end
+
+    test "_(...) does not match map literals or definitions" do
+      source = "def run, do: %{a: 1}"
+      assert [] = ExAST.Patcher.find_all(source, "_(...)")
+    end
+
+    test "_(...) does not match remote calls" do
+      assert [] = ExAST.Patcher.find_all("x = Foo.bar(1)", "_(...)")
+    end
+
+    test "_._(...) matches any remote call" do
+      assert [%{}] = ExAST.Patcher.find_all("x = Foo.bar(1)", "_._(...)")
+    end
+
+    test "_.name(...) matches any-module call to that function" do
+      source = "defmodule M do\n  def run, do: Foo.section() + Bar.section(:x)\nend\n"
+      assert [_, _] = ExAST.Patcher.find_all(source, "_.section(...)")
+      assert [] = ExAST.Patcher.find_all(source, "_.missing(...)")
+    end
+
+    test "_(...) matches a zero-arity local call" do
+      assert [%{node: {:reset, _, []}}] =
+               ExAST.Patcher.find_all("def run, do: reset()", "_(...)")
+    end
+
+    test "_(...) matches a piped local call" do
+      assert [_ | _] = ExAST.Patcher.find_all("def run, do: x |> transform()", "_(...)")
+    end
+
+    test "_(...) does not match word operators" do
+      assert [] = ExAST.Patcher.find_all("left and right", "_(...)")
+      assert [] = ExAST.Patcher.find_all("left or right", "_(...)")
+      assert [] = ExAST.Patcher.find_all("not value", "_(...)")
+      assert [] = ExAST.Patcher.find_all("value in list", "_(...)")
+    end
+  end
+
   describe "pipes" do
     test "pipe into function" do
       assert {:ok, %{}} = match!("data |> Enum.map(fun)", "_ |> Enum.map(_)")
