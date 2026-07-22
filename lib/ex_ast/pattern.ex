@@ -26,6 +26,15 @@ defmodule ExAST.Pattern do
       Pattern.match(node, "IO.inspect(...)")       # any arity
       Pattern.match(node, "foo(first, ...)")        # 1+ args, capture first
       Pattern.match(node, "def foo(_) do ... end")  # any body
+
+  Constrain a definition by argument count with `name/arity`. Like the
+  parenthesized head form, it needs a body clause: `def name/2 do ... end`
+  mirrors `def name(_, _) do ... end`. The name is captured (or `_` to ignore
+  it) and the arity is an integer or `_` for any:
+
+      Pattern.match(node, "def name/2 do ... end")  # 2-arity def, capture name
+      Pattern.match(node, "def _/0 do ... end")     # any 0-arity def
+      Pattern.match(node, "def name/_ do ... end")  # any arity, capture name
   """
 
   @type captures :: %{atom() => term()}
@@ -257,13 +266,27 @@ defmodule ExAST.Pattern do
   def normalize({form, _meta, args}),
     do: {normalize(form), nil, normalize(args)}
 
+  # Genuine 2-tuple literal: fold into the variadic `{:{}, _, [a, b]}` form so
+  # every arity flows through one path. Map/keyword entries are also `{k, v}`
+  # 2-tuples, but they arrive as list elements and are preserved by
+  # `normalize_entry/1` — only standalone tuples reach here.
   def normalize({left, right}),
-    do: {normalize(left), normalize(right)}
+    do: {:{}, nil, [normalize(left), normalize(right)]}
 
   def normalize(list) when is_list(list),
-    do: Enum.map(list, &normalize/1)
+    do: Enum.map(list, &normalize_entry/1)
 
   def normalize(other), do: other
+
+  defp normalize_entry({key, value}), do: {normalize(key), normalize(value)}
+  defp normalize_entry(node), do: normalize(node)
+
+  # Sourceror encodes a genuine 2-tuple literal as `{:__block__, _, [{a, b}]}`
+  # (the extra block carries metadata a bare 2-tuple has no slot for). Fold it
+  # into the variadic `{:{}, _, [a, b]}` form so all tuple arities share one
+  # path. Bare `{k, v}` 2-tuples are map/keyword entries and stay untouched.
+  defp normalize({:__block__, _meta, [{a, b}]}, alias_env),
+    do: {:{}, nil, [normalize(a, alias_env), normalize(b, alias_env)]}
 
   defp normalize({:__block__, _meta, [inner]}, alias_env), do: normalize(inner, alias_env)
 
@@ -644,6 +667,12 @@ defmodule ExAST.Pattern do
   # filter only to map nodes of any size.
   defp signature({:%{}, nil, _args}), do: {:call, :%{}, :any}
 
+  # Tuples (`{:{}, _, _}`) can't be prefiltered by call name: 2-tuples keep their
+  # literal `{a, b}` shape at the source, so a `:{}` filter would drop them. And
+  # `...` is a matcher directive, not a callable — treating it as a call
+  # (`{:contains_call, :..., 0}`) wrongly filters out candidates.
+  defp signature({head, nil, _args}) when head in [:{}, :...], do: :unknown
+
   defp signature({name, nil, args}) when is_atom(name) and is_list(args),
     do: {:call, name, arity_signature(args)}
 
@@ -661,6 +690,8 @@ defmodule ExAST.Pattern do
        do: {:call, name, arity_signature(args)}
 
   defp nested_call_signature({:%{}, _meta, _args}), do: {:call, :%{}, :any}
+
+  defp nested_call_signature({head, _meta, _args}) when head in [:{}, :...], do: :unknown
 
   defp nested_call_signature({name, nil, args}) when is_atom(name) and is_list(args),
     do: {:call, name, arity_signature(args)}
@@ -702,21 +733,26 @@ defmodule ExAST.Pattern do
 
   defp call_candidate?({:|>, _, [_left, {{:., _, [_target, call_name]}, _, args}]}, name, arities)
        when is_list(args),
-       do: Ident.equal?(call_name, name) and arity_candidate?(length(args) + 1, arities)
+       do: call_name_match?(call_name, name) and arity_candidate?(length(args) + 1, arities)
 
   defp call_candidate?({:|>, _, [_left, {call_name, _, args}]}, name, arities)
        when is_list(args),
-       do: Ident.equal?(call_name, name) and arity_candidate?(length(args) + 1, arities)
+       do: call_name_match?(call_name, name) and arity_candidate?(length(args) + 1, arities)
 
   defp call_candidate?({{:., _, [_target, call_name]}, _, args}, name, arities)
        when is_list(args),
-       do: Ident.equal?(call_name, name) and arity_candidate?(length(args), arities)
+       do: call_name_match?(call_name, name) and arity_candidate?(length(args), arities)
 
   defp call_candidate?({call_name, _, args}, name, arities)
        when is_list(args),
-       do: Ident.equal?(call_name, name) and arity_candidate?(length(args), arities)
+       do: call_name_match?(call_name, name) and arity_candidate?(length(args), arities)
 
   defp call_candidate?(_node, _name, _arities), do: false
+
+  # A wildcard callee name (`_` in `_(...)`/`_._(...)`) matches any call name;
+  # arity still filters candidates.
+  defp call_name_match?(call_name, name),
+    do: wildcard_name?(name) or Ident.equal?(call_name, name)
 
   defp contains_call_candidate?(node, name, arities) do
     call_candidate?(node, name, arities) or
@@ -795,6 +831,30 @@ defmodule ExAST.Pattern do
     end
   end
 
+  # Arity-constrained definition head: `def name/2`, `def _/0`, `def name/_`.
+  # The name part is a wildcard (`_`) or a capture bound to the function name
+  # atom; the arity part is an integer or `_` for any arity.
+  defp do_match(
+         {form, nil, [shead | srest]},
+         {form, nil, [{:/, nil, [name_pat, arity_pat]} | prest]},
+         caps
+       )
+       when form in [:def, :defp, :defmacro, :defmacrop] do
+    with {:ok, caps} <- match_def_head_arity(shead, name_pat, arity_pat, caps) do
+      do_match(srest, prest, caps)
+    end
+  end
+
+  # Wildcard local call: `_(...)` matches any local/unqualified call. Remote
+  # calls (`_._(...)`), special forms, operators, and definitions are excluded
+  # so `_(...)` means "a local function call", not "any node".
+  defp do_match({shead, nil, sargs}, {:_, nil, pargs}, caps)
+       when is_list(sargs) and is_list(pargs) do
+    if is_atom(shead) and real_call_name?(shead),
+      do: do_match(sargs, pargs, caps),
+      else: :error
+  end
+
   # 3-tuple with same/equivalent head. Tagged source identifiers compare to
   # pattern atoms by string without interning source names.
   defp do_match({shead, nil, schild}, {phead, nil, pchild}, caps)
@@ -821,6 +881,24 @@ defmodule ExAST.Pattern do
     end
   end
 
+  # Bare 2-tuple pattern vs a folded 2-element source tuple. A genuine 2-tuple
+  # in a list is indistinguishable from a keyword entry at parse time, so the
+  # pattern side keeps it bare while the source side folds it to the variadic
+  # `{:{}, _, [a, b]}` form. Bridge the two shapes here.
+  defp do_match({:{}, nil, [sa, sb]}, {pa, pb}, caps) do
+    with {:ok, caps} <- do_match(sa, pa, caps) do
+      do_match(sb, pb, caps)
+    end
+  end
+
+  # Reverse of the above: a quoted source keeps a genuine 2-tuple bare, while a
+  # standalone pattern tuple folds to `{:{}, _, [a, b]}`. Bridge that shape too.
+  defp do_match({sa, sb}, {:{}, nil, [pa, pb]}, caps) do
+    with {:ok, caps} <- do_match(sa, pa, caps) do
+      do_match(sb, pb, caps)
+    end
+  end
+
   # 2-tuple (keyword pair, two-element tuple)
   defp do_match({sa, sb}, {pa, pb}, caps) do
     with {:ok, caps} <- do_match(sa, pa, caps) do
@@ -837,6 +915,9 @@ defmodule ExAST.Pattern do
       match_list_exact(source, pattern, caps)
     end
   end
+
+  # Wildcard atom: `_` in callee position (e.g. `_._(...)`) matches any atom.
+  defp do_match(_source, :_, caps), do: {:ok, caps}
 
   defp do_match(source, pattern, caps) when is_atom(pattern) do
     if Ident.equal?(source, pattern), do: {:ok, caps}, else: :error
@@ -904,6 +985,85 @@ defmodule ExAST.Pattern do
       _ -> false
     end
   end
+
+  # --- Definition arity matching ---
+
+  defp match_def_head_arity(shead, name_pat, arity_pat, caps) do
+    case def_head_signature(shead) do
+      {:ok, name, arity} ->
+        with {:ok, caps} <- match_def_name(name, name_pat, caps) do
+          match_def_arity(arity, arity_pat, caps)
+        end
+
+      :error ->
+        :error
+    end
+  end
+
+  defp def_head_signature({:when, nil, [head | _guards]}), do: def_head_signature(head)
+  defp def_head_signature({name, nil, nil}), do: {:ok, name, 0}
+  defp def_head_signature({name, nil, args}) when is_list(args), do: {:ok, name, length(args)}
+  defp def_head_signature(_head), do: :error
+
+  defp match_def_name(name, {pname, nil, nil}, caps) when is_atom(pname) do
+    if wildcard_name?(pname), do: {:ok, caps}, else: bind(pname, {name, nil, nil}, caps)
+  end
+
+  defp match_def_name(_name, _name_pat, _caps), do: :error
+
+  defp match_def_arity(arity, arity, caps) when is_integer(arity), do: {:ok, caps}
+  defp match_def_arity(_arity, {:_, nil, nil}, caps), do: {:ok, caps}
+  defp match_def_arity(_arity, _arity_pat, _caps), do: :error
+
+  # Word operators (`and`, `or`, `not`, `in`, `when`) are identifier-shaped, so
+  # they pass `regular_identifier?/1` and must be excluded explicitly; symbolic
+  # operators (`&&`, `||`, `++`, ...) are already rejected there.
+  @word_operators [:and, :or, :not, :in, :when]
+
+  # Word-shaped heads that are special forms/definitions/directives rather than
+  # function calls, so `_(...)` does not treat them as calls. Symbolic heads
+  # (`%{}`, `{}`, `.`, operators, `@`, ...) are already excluded by
+  # `regular_identifier?/1`, so only identifier-shaped forms need listing.
+  @non_call_heads ExAST.Symbols.definition_forms() ++
+                    @word_operators ++
+                    [
+                      :__block__,
+                      :__aliases__,
+                      :fn,
+                      :defmodule,
+                      :defdelegate,
+                      :defstruct,
+                      :defexception,
+                      :defguard,
+                      :defguardp,
+                      :defprotocol,
+                      :defimpl,
+                      :case,
+                      :cond,
+                      :if,
+                      :unless,
+                      :with,
+                      :for,
+                      :try,
+                      :receive,
+                      :quote,
+                      :unquote,
+                      :unquote_splicing,
+                      :super,
+                      :import,
+                      :alias,
+                      :require,
+                      :use
+                    ]
+
+  defp real_call_name?(name) when is_atom(name) do
+    name not in @non_call_heads and regular_identifier?(Atom.to_string(name))
+  end
+
+  defp regular_identifier?(<<first, rest::binary>>) when first in ?a..?z or first == ?_,
+    do: String.match?(rest, ~r/^[A-Za-z0-9_]*[?!]?$/)
+
+  defp regular_identifier?(_name), do: false
 
   defp bind(name, node, captures) do
     case Map.fetch(captures, name) do

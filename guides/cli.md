@@ -12,6 +12,7 @@ Search files for AST pattern matches. PATH can be a file, directory, or glob.
 
 | Flag | Meaning |
 |------|---------|
+| `-e`, `--pattern PATTERN` | Add a pattern to a multi-pattern batch (repeatable). See [Multiple patterns](#multiple-patterns) |
 | `--count` | Print match count only |
 | `--count-by-file` | Print per-file match counts, most matches first |
 | `--limit N` | Stop after N matches |
@@ -74,6 +75,59 @@ mix ex_ast.search 'IO.inspect(_)' lib/ --count-by-file
 # Resolve a bare `import Enum` to its real exports
 mix ex_ast.search 'Enum.map(_, _)' lib/ --expand-imports
 ```
+
+## Multiple patterns
+
+Pass a repeatable `-e` / `--pattern` flag to search several patterns in one
+invocation. Each file is read and parsed once for the whole batch, avoiding BEAM
+startup and per-file re-parsing per pattern — useful for analyzers that run many
+checks over the same tree.
+
+```bash
+mix ex_ast.search -e 'IO.inspect(_)' -e 'dbg(_)' lib/
+```
+
+In this mode there is no positional pattern; remaining positional args are
+paths. Combining a positional pattern with `-e` is an error.
+
+### Per-pattern selector filters
+
+Selector-scoping flags (`--inside`, `--not-inside`, `--parent`, `--contains`,
+etc.) are *per-pattern*: a filter binds to the most recent preceding `-e`,
+mirroring `grep -e`. Filters do not bleed across patterns.
+
+```bash
+mix ex_ast.search \
+  -e 'App.Repo.get!(_, _)' --inside 'def handle_call(_, _, _) do _ end' \
+  -e 'IO.inspect(_)' --not-inside 'test _ do _ end' \
+  lib/ test/
+```
+
+Global flags (`--count`, `--json`, `--expand-imports`, `--limit`,
+`--allow-broad`, paths) apply to the whole batch.
+
+### Output
+
+Each match is tagged by its pattern string:
+
+```
+[IO.inspect(_)] lib/foo.ex:12
+  IO.inspect(result)
+
+[dbg(_)] lib/bar.ex:88
+  dbg(value)
+
+2 pattern(s), 2 match(es)
+```
+
+`--count` prints a per-pattern tally plus a total; `--json` includes the
+`pattern` field on each match. Duplicate `-e` patterns raise an error, and
+`--count-by-file` is not supported with `-e`.
+
+Multi-pattern search uses one shared path list for all patterns, so per-pattern
+path include/exclude is not expressible in a single call — group patterns by
+shared path scope into separate invocations. Per-pattern *selector filters* do
+work, since they live in each pattern's selector.
 
 ## Replace
 

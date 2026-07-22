@@ -76,6 +76,25 @@ defmodule ExAST.CLI.SelectorOptions do
     end
   end
 
+  @doc """
+  Like `pattern/4`, but bakes *every* selector switch — including `--inside`
+  and `--not-inside` — into the returned `Selector`.
+
+  `pattern/4` intentionally leaves lone `inside`/`not_inside` filters out of the
+  selector so callers can route them through `where_opts/2` as global search
+  options. That indirection can't express per-pattern scoping, so multi-pattern
+  callers use this instead: each pattern carries its own filters in its selector.
+  """
+  def scoped_pattern(pattern, opts, validate_filter!) do
+    filter_opts = Keyword.take(opts, Keyword.keys(@switches))
+
+    if filter_opts == [] do
+      pattern
+    else
+      build_selector(pattern, filter_opts, validate_filter!)
+    end
+  end
+
   def where_opts(opts, ignored_opts \\ []) do
     if selector_filters?(opts, ignored_opts),
       do: [],
