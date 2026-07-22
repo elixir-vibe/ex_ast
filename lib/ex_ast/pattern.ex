@@ -663,6 +663,10 @@ defmodule ExAST.Pattern do
   defp signature({{:., nil, [_target, name]}, nil, args}) when is_atom(name) and is_list(args),
     do: {:call, name, arity_signature(args)}
 
+  # Maps match a subset of their keys, so entry count must not gate candidacy;
+  # filter only to map nodes of any size.
+  defp signature({:%{}, nil, _args}), do: {:call, :%{}, :any}
+
   # Tuples (`{:{}, _, _}`) can't be prefiltered by call name: 2-tuples keep their
   # literal `{a, b}` shape at the source, so a `:{}` filter would drop them. And
   # `...` is a matcher directive, not a callable — treating it as a call
@@ -684,6 +688,8 @@ defmodule ExAST.Pattern do
   defp nested_call_signature({{:., nil, [_target, name]}, nil, args})
        when is_atom(name) and is_list(args),
        do: {:call, name, arity_signature(args)}
+
+  defp nested_call_signature({:%{}, _meta, _args}), do: {:call, :%{}, :any}
 
   defp nested_call_signature({head, _meta, _args}) when head in [:{}, :...], do: :unknown
 
@@ -1088,7 +1094,9 @@ defmodule ExAST.Pattern do
   # --- Subset matching for structs/maps ---
 
   defp match_subset(source_kvs, pattern_kvs, caps) do
-    Enum.reduce_while(pattern_kvs, {:ok, caps}, fn {pkey, pval}, {:ok, caps} ->
+    pattern_kvs
+    |> Enum.reject(&ellipsis?/1)
+    |> Enum.reduce_while({:ok, caps}, fn {pkey, pval}, {:ok, caps} ->
       source_kvs
       |> find_value_by_key(pkey)
       |> match_kv_value(pval, caps)
