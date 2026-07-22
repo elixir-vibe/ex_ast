@@ -5,8 +5,8 @@ Search, replace, and diff Elixir code by AST pattern.
 Patterns are plain Elixir — variables capture, `_` is a wildcard,
 structs match partially, pipes are normalized. `...` captures variable arity,
 `^name` matches a literal variable name, `name`/`fun`/`function` can capture
-function names in definitions, and `fun`/`function` can capture call names. No
-regex, no custom DSL.
+function names in definitions, and `fun`/`function` can capture call names.
+`_(...)` and `_._(...)` match any local or remote call. No regex, no custom DSL.
 
 ```bash
 mix ex_ast.search  'IO.inspect(_)'
@@ -37,6 +37,8 @@ ExAST.Patcher.find_many(source,
   get_env: "@_ Application.get_env(_, _)",
   dbg_call: "dbg(expr)"
 )
+# same batch from the CLI — one boot, one parse per file:
+#   mix ex_ast.search -e "@_ Application.get_env(_, _)" -e "dbg(_)" lib/
 
 # Preview rewrites before applying patches
 ExAST.rewrite_plan(source, "dbg(expr)", "expr")
@@ -91,6 +93,11 @@ def handle_call(msg, _, state) do _ end
 def name(_, _) do ... end      # captures the definition name
 Repo.fun(changeset)            # captures remote call names like insert/update
 fun(changeset)                 # captures local call names
+
+# Wildcard callees — match any call
+_(...)                         # any local call
+_._(...)                       # any remote call
+_.section(...)                 # any-module call to `section`
 
 # Literal variable names
 {:reply, ^state, ^state}
