@@ -1,6 +1,7 @@
 defmodule ExAST.PatternTest do
   use ExUnit.Case, async: true
 
+  alias ExAST.Patcher
   alias ExAST.Pattern
 
   defp match!(source, pattern) do
@@ -144,6 +145,192 @@ defmodule ExAST.PatternTest do
     test "{:noreply, state}" do
       assert {:ok, caps} = match!("{:noreply, []}", "{:noreply, state}")
       assert Map.has_key?(caps, :state)
+    end
+
+    test "quoted source 2-tuple against quoted pattern" do
+      assert {:ok, %{}} = Pattern.match(quote(do: {:ok, value}), quote(do: {:ok, _}))
+
+      assert {:ok, %{v: _}} = Pattern.match(quote(do: {:ok, value}), quote(do: {:ok, v}))
+
+      assert :error = Pattern.match(quote(do: :error), quote(do: {:ok, _}))
+    end
+  end
+
+  describe "tuple ellipsis via find_all (all arities)" do
+    defp find(source, pattern), do: Patcher.find_all(source, pattern)
+
+    test "{...} matches every tuple arity" do
+      assert [_] = find("x = {}", "{...}")
+      assert [_] = find("x = {:only}", "{...}")
+      assert [_] = find("x = {:ok, value}", "{...}")
+      assert [_] = find("x = {1, 2, 3}", "{...}")
+      assert [_] = find("x = {1, 2, 3, 4}", "{...}")
+    end
+
+    test "{...} does not match non-tuples" do
+      assert [] = find("x = [1, 2, 3]", "{...}")
+      assert [] = find("x = %{a: 1}", "{...}")
+    end
+
+    test "{:ok, ...} matches 2-tuples specifically" do
+      assert [_] = find("x = {:ok, value}", "{:ok, ...}")
+      assert [_] = find("x = {:ok, 1, 2}", "{:ok, ...}")
+      assert [] = find("x = {:error, reason}", "{:ok, ...}")
+    end
+
+    test "{..., :done} matches 2-tuples specifically" do
+      assert [_] = find("x = {:step, :done}", "{..., :done}")
+      assert [_] = find("x = {1, 2, :done}", "{..., :done}")
+      assert [] = find("x = {:step, :pending}", "{..., :done}")
+    end
+
+    test "captures still work on 2-tuples" do
+      assert [%{captures: caps}] = find("x = {:ok, payload}", "{:ok, v}")
+      assert Map.has_key?(caps, :v)
+
+      assert [%{captures: caps}] = find("x = {:ok, payload}", "{a, b}")
+      assert Map.has_key?(caps, :a)
+      assert Map.has_key?(caps, :b)
+
+      assert [_] = find("x = {:ok, payload}", "{_, _}")
+    end
+
+    test "ellipsis captures head, tail, and both sides" do
+      assert [%{captures: %{first: _}}] = find("x = {1, 2, 3}", "{first, ...}")
+      assert [%{captures: %{last: _}}] = find("x = {1, 2, 3}", "{..., last}")
+
+      assert [%{captures: caps}] = find("x = {1, 2, 3, 4}", "{first, ..., last}")
+      assert Map.has_key?(caps, :first)
+      assert Map.has_key?(caps, :last)
+    end
+
+    test "multiple fixed elements on either side of ellipsis" do
+      assert [%{captures: caps}] = find("x = {1, 2, 3, 4}", "{a, b, ...}")
+      assert Map.has_key?(caps, :a)
+      assert Map.has_key?(caps, :b)
+
+      assert [%{captures: caps}] = find("x = {1, 2, 3, 4}", "{..., c, d}")
+      assert Map.has_key?(caps, :c)
+      assert Map.has_key?(caps, :d)
+
+      assert [_] = find("x = {1, 2, 3, 4, 5}", "{a, ..., d, e}")
+    end
+
+    test "ellipsis enforces the minimum arity of fixed elements" do
+      assert [_] = find("x = {1, 2}", "{first, ..., last}")
+      assert [] = find("x = {1}", "{first, ..., last}")
+
+      assert [_] = find("x = {1, 2}", "{a, b, ...}")
+      assert [] = find("x = {1}", "{a, b, ...}")
+    end
+
+    test "ellipsis still respects fixed literals around it" do
+      assert [_] = find("x = {:ok, 1, 2, :done}", "{:ok, ..., :done}")
+      assert [] = find("x = {:ok, 1, 2, :nope}", "{:ok, ..., :done}")
+      assert [] = find("x = {:no, 1, 2, :done}", "{:ok, ..., :done}")
+    end
+
+    test "maps and keywords are unaffected" do
+      assert [_] = find("x = %{a: 1}", "%{a: 1}")
+      assert [%{captures: %{n: _}}] = find("x = %{a: 1}", "%{a: n}")
+
+      assert [_ | _] = find("x = [a: 1]", "[a: 1]")
+      assert [%{captures: %{v: _}} | _] = find("x = [a: 1]", "[a: v]")
+    end
+  end
+
+  describe "structural patterns on = and <-" do
+    test "tuple on LHS of = (match operator)" do
+      assert {:ok, %{}} = match!("{:ok, val} = fetch(y)", "{:ok, _} = _")
+    end
+
+    test "tuple with capture on LHS of =" do
+      assert {:ok, caps} = match!("{:ok, val} = fetch(y)", "{:ok, x} = _")
+      assert Map.has_key?(caps, :x)
+    end
+
+    test "tuple as RHS value of =" do
+      assert {:ok, %{}} = match!("result = {:ok, val}", "_ = {:ok, _}")
+    end
+
+    test "3-tuple on LHS of =" do
+      assert {:ok, %{}} = match!("{:ok, a, b} = fetch(y)", "{:ok, _, _} = _")
+    end
+
+    test "list on LHS of =" do
+      assert {:ok, %{}} = match!("[h | t] = fetch(y)", "[_ | _] = _")
+    end
+
+    test "map on LHS of =" do
+      assert {:ok, %{}} = match!("%{a: v} = fetch(y)", "%{a: _} = _")
+    end
+
+    test "wildcard on LHS of =" do
+      assert {:ok, %{}} = match!("{:ok, val} = fetch(y)", "_ = _")
+    end
+
+    test "capture on LHS of =" do
+      assert {:ok, %{pat: _}} = match!("{:ok, val} = fetch(y)", "pat = _")
+    end
+
+    test "tuple on LHS of <- (with clause)" do
+      assert {:ok, %{}} =
+               match!(
+                 "with {:ok, val} <- fetch(x) do\n  val\nend",
+                 "with {:ok, _} <- _ do ... end"
+               )
+    end
+
+    test "tuple with capture on LHS of <-" do
+      assert {:ok, caps} =
+               match!(
+                 "with {:ok, val} <- fetch(x) do\n  val\nend",
+                 "with {:ok, x} <- _ do ... end"
+               )
+
+      assert Map.has_key?(caps, :x)
+    end
+
+    test "find_all: tuple on LHS of = (match operator)" do
+      source = """
+      def g(y) do
+        {:ok, val} = fetch(y)
+        val
+      end
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "{:ok, _} = _")
+    end
+
+    test "find_all: tuple on LHS of <- (with clause)" do
+      source = """
+      def f(x) do
+        with {:ok, val} <- fetch(x) do
+          val
+        end
+      end
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "with {:ok, _} <- _ do ... end")
+    end
+
+    test "find_all: tuple as RHS value of =" do
+      source = """
+      def g(y) do
+        result = {:ok, y}
+        result
+      end
+      """
+
+      assert [_] = ExAST.Patcher.find_all(source, "_ = {:ok, _}")
+    end
+
+    test "tuple as a list element" do
+      assert {:ok, %{}} = match!("[{:ok, val}]", "[{:ok, _}]")
+    end
+
+    test "tuple as a call argument inside a list" do
+      assert {:ok, %{}} = match!("foo([{:ok, val}])", "foo([{:ok, _}])")
     end
   end
 
