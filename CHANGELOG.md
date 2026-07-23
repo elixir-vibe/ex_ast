@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.13.1 - 2026-07-23
+
+### Compatibility
+
+- Restored support for Elixir 1.18, which was unintentionally excluded by the
+  0.13.0 package requirement.
+
 ## 0.13.0 - 2026-07-22
 
 ### Added
