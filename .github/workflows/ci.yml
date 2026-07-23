@@ -13,5 +13,6 @@ jobs:
   ci:
     uses: elixir-vibe/actions/.github/workflows/elixir-ci.yml@v1
     with:
+      min-elixir: "1.18"
       restore-deps-cache: false
       restore-plt-cache: false
