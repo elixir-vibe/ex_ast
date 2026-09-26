@@ -11,6 +11,7 @@ defmodule Mix.Tasks.ExAst.Search do
 
     * `-e`, `--pattern` — add a pattern to a multi-pattern batch (repeatable)
     * `--count` — only print the number of matches
+    * `--print name` — print only the value captured by `name`, one value per match; every pattern must declare `name`
     * `--count-by-file` — print per-file match counts, most matches first
     * `--limit n` — stop after returning this many matches
     * `--allow-broad` — allow unbounded broad searches like `_`
@@ -114,7 +115,8 @@ defmodule Mix.Tasks.ExAst.Search do
     allow_broad: :boolean,
     format: :string,
     json: :boolean,
-    expand_imports: :boolean
+    expand_imports: :boolean,
+    print: :string
   ]
 
   @impl Mix.Task
@@ -162,6 +164,7 @@ defmodule Mix.Tasks.ExAst.Search do
     {patterns, seg_global_opts, paths} = compile_segments(segments)
     global_opts = Keyword.merge(global_opts, seg_global_opts)
     reject_multi_unsupported!(global_opts)
+    validate_print!(global_opts[:print], Enum.map(patterns, & &1.pattern))
     paths = if paths == [], do: ["lib/"], else: paths
 
     {named_patterns, key_to_str} = build_named_patterns!(patterns)
@@ -267,6 +270,9 @@ defmodule Mix.Tasks.ExAst.Search do
         json?(opts) ->
           JSON.print(%{matches: results, count: length(results)})
 
+        opts[:print] ->
+          Enum.each(results, &print_capture(&1, opts[:print]))
+
         opts[:count] ->
           print_many_count(results, pattern_strs)
 
@@ -296,6 +302,7 @@ defmodule Mix.Tasks.ExAst.Search do
 
   defp do_search(paths, pattern, opts) do
     validate_pattern!(pattern)
+    validate_print!(opts[:print], [pattern])
 
     search_pattern =
       SelectorOptions.pattern(pattern, opts, &validate_pattern!/1, [
@@ -323,6 +330,9 @@ defmodule Mix.Tasks.ExAst.Search do
       cond do
         json?(opts) ->
           JSON.print(%{matches: results, count: length(results)})
+
+        opts[:print] ->
+          Enum.each(results, &print_capture(&1, opts[:print]))
 
         opts[:count_by_file] ->
           print_count_by_file(results)
@@ -363,14 +373,47 @@ defmodule Mix.Tasks.ExAst.Search do
     Output.puts("")
   end
 
+  defp validate_print!(nil, _patterns), do: :ok
+
+  defp validate_print!(name, patterns) do
+    var = String.to_atom(name)
+
+    case Enum.reject(patterns, &declares?(&1, var)) do
+      [] ->
+        :ok
+
+      [pattern | _] ->
+        quoted = inspect(pattern)
+        Mix.raise("--print: pattern #{quoted} does not declare #{name}")
+    end
+  end
+
+  defp declares?(pattern, var) do
+    {_ast, found?} =
+      pattern
+      |> Code.string_to_quoted!()
+      |> Macro.prewalk(false, fn
+        {^var, _meta, ctx} = node, _found? when is_atom(ctx) -> {node, true}
+        node, found? -> {node, found?}
+      end)
+
+    found? and not String.starts_with?(Atom.to_string(var), "_")
+  end
+
+  defp print_capture(%{captures: captures}, name) do
+    captures |> Map.fetch!(String.to_atom(name)) |> render_capture() |> Output.puts()
+  end
+
   defp print_captures(captures) when map_size(captures) == 0, do: :ok
 
   defp print_captures(captures) do
     for {name, value} <- captures do
-      rendered = value |> restore_meta() |> Macro.to_string()
+      rendered = render_capture(value)
       Output.puts("  #{name}: #{rendered}")
     end
   end
+
+  defp render_capture(value), do: value |> restore_meta() |> Macro.to_string()
 
   defp restore_meta(ast) do
     Macro.prewalk(ast, fn

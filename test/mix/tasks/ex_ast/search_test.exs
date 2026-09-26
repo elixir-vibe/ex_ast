@@ -293,6 +293,57 @@ defmodule Mix.Tasks.ExAst.SearchTest do
     assert output =~ "expr: value"
   end
 
+  @tag :tmp_dir
+  test "--print prints only the named capture, one value per match", %{tmp_dir: dir} do
+    file = Path.join(dir, "runtime.exs")
+
+    File.write!(file, """
+    config :my_app, feature_enabled: true
+    config :my_app, feature_enabled: System.get_env("FEATURE") == "1"
+    """)
+
+    output =
+      capture_io(fn ->
+        Mix.Task.run("ex_ast.search", [
+          "config :my_app, feature_enabled: x",
+          file,
+          "--print",
+          "x"
+        ])
+      end)
+
+    assert output == "true\nSystem.get_env(\"FEATURE\") == \"1\"\n"
+  end
+
+  @tag :tmp_dir
+  test "--print keeps a multi-line value on several lines", %{tmp_dir: dir} do
+    file = Path.join(dir, "runtime.exs")
+
+    File.write!(file, """
+    config :my_app, handler: fn a ->
+      b = a + 1
+      b * 2
+    end
+    """)
+
+    output =
+      capture_io(fn ->
+        Mix.Task.run("ex_ast.search", ["config :my_app, handler: x", file, "--print", "x"])
+      end)
+
+    assert output == "fn a ->\n  b = a + 1\n  b * 2\nend\n"
+  end
+
+  @tag :tmp_dir
+  test "--print raises when the pattern does not declare the variable", %{tmp_dir: dir} do
+    file = Path.join(dir, "sample.ex")
+    File.write!(file, "IO.inspect(value)\n")
+
+    assert_raise Mix.Error, ~r/does not declare x/, fn ->
+      Mix.Task.run("ex_ast.search", ["IO.inspect(_x)", file, "--print", "x"])
+    end
+  end
+
   describe "multiple -e patterns" do
     @tag :tmp_dir
     test "runs several patterns in one invocation, tagged", %{tmp_dir: dir} do
@@ -396,6 +447,45 @@ defmodule Mix.Tasks.ExAst.SearchTest do
         end)
 
       assert output =~ "1 pattern(s), 1 match(es)"
+    end
+
+    @tag :tmp_dir
+    test "--print prints only the named capture across all patterns", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "IO.inspect(a)\ndbg(b)\n")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", [
+            "-e",
+            "IO.inspect(x)",
+            "-e",
+            "dbg(x)",
+            file,
+            "--print",
+            "x"
+          ])
+        end)
+
+      assert output == "a\nb\n"
+    end
+
+    @tag :tmp_dir
+    test "--print raises when any pattern does not declare the variable", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "IO.inspect(a)\ndbg(b)\n")
+
+      assert_raise Mix.Error, ~r/"dbg\(y\)" does not declare x/, fn ->
+        Mix.Task.run("ex_ast.search", [
+          "-e",
+          "IO.inspect(x)",
+          "-e",
+          "dbg(y)",
+          file,
+          "--print",
+          "x"
+        ])
+      end
     end
 
     @tag :tmp_dir
