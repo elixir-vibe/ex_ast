@@ -210,6 +210,12 @@ defmodule ExAST.PatcherTest do
       refute result =~ "IO.inspect"
     end
 
+    test "keeps escape sequences in a captured string" do
+      source = ~S|IO.puts("a\n\tb \"q\"")| <> "\n"
+      result = Patcher.replace_all(source, "IO.puts(x)", "Logger.info(x)")
+      assert result == ~S|Logger.info("a\n\tb \"q\"")| <> "\n"
+    end
+
     test "replaces multiple matches" do
       source = """
       IO.inspect(a)

@@ -7,6 +7,7 @@ defmodule ExAST.Index.Terms do
   """
 
   alias ExAST.Ident
+  alias ExAST.Pattern
 
   @type mode :: :source | :pattern
   @type signal :: :high | :normal | :low
@@ -19,7 +20,17 @@ defmodule ExAST.Index.Terms do
   end
 
   @spec from_ast(Macro.t()) :: MapSet.t(String.t())
-  def from_ast(ast), do: ast |> collect(:source) |> MapSet.new()
+  def from_ast(ast), do: ast |> unescape_atoms() |> collect(:source) |> MapSet.new()
+
+  defp unescape_atoms(ast) do
+    Macro.prewalk(ast, fn
+      {:__block__, meta, [atom]} when is_atom(atom) ->
+        {:__block__, meta, [Pattern.unescape_literal(atom, meta)]}
+
+      node ->
+        node
+    end)
+  end
 
   @spec from_pattern(term() | [term()]) :: MapSet.t(String.t())
   def from_pattern({:__ex_ast_any_patterns__, patterns}) when is_list(patterns) do

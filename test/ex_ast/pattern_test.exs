@@ -38,6 +38,32 @@ defmodule ExAST.PatternTest do
     end
   end
 
+  describe "escape sequences" do
+    test "a string with escapes matches the same string" do
+      assert {:ok, %{}} = match!(~S|IO.puts("a\n\tb \"q\"")|, ~S|IO.puts("a\n\tb \"q\"")|)
+      assert :error = match!(~S|IO.puts("a\n")|, ~S|IO.puts("a\\n")|)
+    end
+
+    test "captures hold the unescaped value" do
+      assert {:ok, %{x: "a\n"}} = match!(~S|IO.puts("a\n")|, "IO.puts(x)")
+    end
+
+    test "interpolated strings, quoted atoms and keyword keys" do
+      assert {:ok, _} = match!(~S|"a\n#{name}"|, ~S|"a\n#{x}"|)
+      assert {:ok, %{}} = match!(~S|:"a\n"|, ~S|:"a\n"|)
+      assert {:ok, %{}} = match!(~S|f("k\n": 1)|, ~S|f("k\n": 1)|)
+    end
+
+    test "a heredoc matches the equivalent string" do
+      assert {:ok, %{}} = match!(~s|x = """\n  a\\tb\n  """|, ~S|x = "a\tb\n"|)
+    end
+
+    test "sigil contents stay raw" do
+      assert {:ok, %{}} = match!(~S|~r/a\n/|, ~S|~r/a\n/|)
+      assert :error = match!(~S|~r/a\n/|, ~s|~r/a\n/|)
+    end
+  end
+
   describe "wildcards" do
     test "underscore matches anything" do
       assert {:ok, %{}} = match!("IO.inspect(data)", "IO.inspect(_)")
