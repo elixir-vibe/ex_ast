@@ -479,7 +479,7 @@ defmodule Mix.Tasks.ExAst.SearchTest do
     end
 
     @tag :tmp_dir
-    test "--color highlights the path, line numbers and the exact match span", %{tmp_dir: dir} do
+    test "--color marks the path, line numbers and the exact match span", %{tmp_dir: dir} do
       file = Path.join(dir, "sample.ex")
 
       File.write!(file, """
@@ -496,7 +496,7 @@ defmodule Mix.Tasks.ExAst.SearchTest do
 
       path = IO.ANSI.magenta()
       number = IO.ANSI.green()
-      match = IO.ANSI.red() <> IO.ANSI.bright()
+      match = IO.ANSI.bright()
       reset = IO.ANSI.reset()
 
       assert output == """
@@ -507,6 +507,57 @@ defmodule Mix.Tasks.ExAst.SearchTest do
 
              3 match(es)
              """
+    end
+
+    @tag :tmp_dir
+    test "--color gives each capture its own color inside the span", %{tmp_dir: dir} do
+      file = Path.join(dir, "config.exs")
+
+      File.write!(file, """
+      config :ripple, Ripple.Maps,
+        disabled: false
+      """)
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["config app, key, opts", file, "-C", "0", "--color"])
+        end)
+
+      path = IO.ANSI.magenta()
+      number = IO.ANSI.green()
+      span = IO.ANSI.bright()
+      app = IO.ANSI.red() <> IO.ANSI.bright()
+      key = IO.ANSI.yellow() <> IO.ANSI.bright()
+      opts = IO.ANSI.cyan() <> IO.ANSI.bright()
+      reset = IO.ANSI.reset()
+
+      assert output == """
+             #{path}#{file}#{reset}
+             #{number}1#{reset}:#{span}config #{reset}#{app}:ripple#{reset}#{span}, #{reset}#{key}Ripple.Maps#{reset}#{span},#{reset}
+             #{number}2#{reset}:#{span}  #{reset}#{opts}disabled: false#{reset}
+
+             1 match(es)
+             """
+    end
+
+    @tag :tmp_dir
+    test "--color ends a boolean capture at the literal", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "Map.put(m, :on, false)\n")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["Map.put(map, key, value)", file, "-C", "0", "--color"])
+        end)
+
+      span = IO.ANSI.bright()
+      key = IO.ANSI.red() <> IO.ANSI.bright()
+      map = IO.ANSI.yellow() <> IO.ANSI.bright()
+      value = IO.ANSI.cyan() <> IO.ANSI.bright()
+      reset = IO.ANSI.reset()
+
+      assert output =~
+               "#{span}Map.put(#{reset}#{map}m#{reset}#{span}, #{reset}#{key}:on#{reset}#{span}, #{reset}#{value}false#{reset}#{span})#{reset}\n"
     end
 
     @tag :tmp_dir

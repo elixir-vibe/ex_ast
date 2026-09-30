@@ -106,6 +106,7 @@ defmodule Mix.Tasks.ExAst.Search do
 
   use Mix.Task
 
+  alias ExAST.CLI.Context
   alias ExAST.CLI.JSON
   alias ExAST.CLI.Output
   alias ExAST.CLI.SelectorOptions
@@ -293,7 +294,7 @@ defmodule Mix.Tasks.ExAst.Search do
           print_many_count(results, pattern_strs)
 
         window = context_window(opts) ->
-          print_with_context(results, window, color?(opts))
+          Context.print(results, window, color?(opts))
           Output.puts("\n#{length(pattern_strs)} pattern(s), #{length(results)} match(es)")
 
         true ->
@@ -362,7 +363,7 @@ defmodule Mix.Tasks.ExAst.Search do
           Output.puts(length(results))
 
         window = context_window(opts) ->
-          print_with_context(results, window, color?(opts))
+          Context.print(results, window, color?(opts))
           Output.puts("\n#{length(results)} match(es)")
 
         true ->
@@ -409,100 +410,6 @@ defmodule Mix.Tasks.ExAst.Search do
   end
 
   defp color?(opts), do: Keyword.get_lazy(opts, :color, &Output.ansi?/0)
-
-  defp print_with_context(results, window, color?) do
-    results
-    |> Enum.chunk_by(& &1.file)
-    |> Enum.with_index()
-    |> Enum.each(fn {[%{file: file} | _] = matches, index} ->
-      if index > 0, do: Output.puts()
-      print_file_context(file, matches, window, color?)
-    end)
-  end
-
-  defp print_file_context(file, matches, {before, after_}, color?) do
-    lines = file |> File.stream!() |> Enum.map(&String.trim_trailing(&1, "\n")) |> List.to_tuple()
-    spans = matches |> Enum.map(&match_span/1) |> Enum.sort()
-
-    highlights =
-      matches
-      |> Enum.flat_map(&match_highlights/1)
-      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
-
-    Output.puts(IO.ANSI.format_fragment([:magenta, file, :reset], color?))
-
-    spans
-    |> Enum.map(fn {first, last} ->
-      {max(first - before, 1), min(last + after_, tuple_size(lines))}
-    end)
-    |> merge_groups()
-    |> Enum.with_index()
-    |> Enum.each(fn {group, index} ->
-      if index > 0, do: Output.puts("--")
-      print_group(group, lines, highlights, color?)
-    end)
-  end
-
-  defp match_span(%{range: %{start: start, end: end_}, line: line}) do
-    {start[:line] || line, end_[:line] || line}
-  end
-
-  defp match_span(%{line: line}), do: {line, line}
-
-  defp match_highlights(match) do
-    {first, last} = match_span(match)
-    {from, to} = match_columns(match)
-
-    for line <- first..last do
-      {line, {if(line == first, do: from, else: 1), if(line == last, do: to, else: :infinity)}}
-    end
-  end
-
-  defp match_columns(%{range: %{start: start, end: end_}}),
-    do: {start[:column] || 1, end_[:column] || :infinity}
-
-  defp match_columns(_match), do: {1, :infinity}
-
-  defp merge_groups(groups) do
-    groups
-    |> Enum.reduce([], fn
-      {first, last}, [{prev_first, prev_last} | rest] when first <= prev_last + 1 ->
-        [{prev_first, max(last, prev_last)} | rest]
-
-      group, acc ->
-        [group | acc]
-    end)
-    |> Enum.reverse()
-  end
-
-  defp print_group({first, last}, lines, highlights, color?) do
-    for number <- first..last do
-      text = elem(lines, number - 1)
-
-      line =
-        case Map.fetch(highlights, number) do
-          {:ok, columns} -> [":" | highlight(text, columns)]
-          :error -> ["-", text]
-        end
-
-      Output.puts(IO.ANSI.format_fragment([:green, "#{number}", :reset | line], color?))
-    end
-  end
-
-  defp highlight(text, columns) do
-    text
-    |> String.graphemes()
-    |> Enum.with_index(1)
-    |> Enum.chunk_by(fn {_char, column} -> highlighted?(column, columns) end)
-    |> Enum.map(fn [{_char, column} | _] = chunk ->
-      chunk_text = Enum.map_join(chunk, &elem(&1, 0))
-      if highlighted?(column, columns), do: [:red, :bright, chunk_text, :reset], else: chunk_text
-    end)
-  end
-
-  defp highlighted?(column, columns) do
-    Enum.any?(columns, fn {from, to} -> column >= from and column < to end)
-  end
 
   defp print_match(%{file: file, line: line, source: source, captures: captures}) do
     Output.puts("#{file}:#{line}")
