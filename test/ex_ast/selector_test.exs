@@ -223,6 +223,63 @@ defmodule ExAST.SelectorTest do
       assert match.captures[:value] == :run
     end
 
+    test "has_child sees positional arguments before a trailing keyword list" do
+      source = """
+      defmodule Repro do
+        def a, do: Repo.query!(~SQL"SELECT 1", [], [])
+        def b, do: Repo.query!(~SQL"SELECT 1", [], telemetry_options: [operation: "select"])
+        def c, do: Repo.query!(~SQL"SELECT 1", [], timeout: 5_000, log: false)
+      end
+      """
+
+      positional = Patcher.find_all(source, "_.query!(sigil_SQL(_, _), _, _)")
+      assert length(positional) == 3
+
+      with_sigil =
+        pattern("_.query!(...)")
+        |> where(has_child("sigil_SQL(_, _)"))
+
+      assert Enum.map(Patcher.find_all(source, with_sigil), & &1.node) ==
+               Enum.map(positional, & &1.node)
+
+      without_sigil =
+        pattern("_.query!(...)")
+        |> where(not has_child("sigil_SQL(_, _)"))
+
+      assert Patcher.find_all(source, without_sigil) == []
+    end
+
+    test "parent resolves a node inside a do: one-liner to the enclosing call" do
+      source = """
+      def run, do: IO.inspect(:run)
+      if true, do: IO.inspect(:if)
+      """
+
+      selector =
+        pattern("IO.inspect(value)")
+        |> where(parent("def run, do: _"))
+
+      [match] = Patcher.find_all(source, selector)
+      assert match.captures[:value] == :run
+    end
+
+    test "child selects the bodies of every block keyword" do
+      source = """
+      if enabled? do
+        IO.inspect(:then)
+      else
+        IO.inspect(:else)
+      end
+      """
+
+      selector =
+        pattern("if _ do _ else _ end")
+        |> child("IO.inspect(value)")
+
+      assert source |> Patcher.find_all(selector) |> Enum.map(& &1.captures[:value]) ==
+               [:then, :else]
+    end
+
     test "ancestor filters by any semantic ancestor" do
       source = """
       def run do

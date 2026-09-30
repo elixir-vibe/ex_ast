@@ -992,15 +992,25 @@ defmodule ExAST.Patcher do
   defp semantic_children(list) when is_list(list), do: Enum.filter(list, &ast_node?/1)
   defp semantic_children(_), do: []
 
+  @block_keywords [:do, :else, :after, :rescue, :catch]
+
   defp do_block_children(args) do
-    Enum.find_value(args, fn
-      [{_, {:__block__, _, children}}] when is_list(children) -> children
-      [{_, child}] when is_tuple(child) or is_list(child) -> List.wrap(child)
-      {_, {:__block__, _, children}} when is_list(children) -> children
-      {_, child} when is_tuple(child) or is_list(child) -> List.wrap(child)
+    with [_ | _] = pairs <- List.last(args),
+         keys = Enum.map(pairs, &block_keyword/1),
+         true <- :do in keys and Enum.all?(keys, &(&1 in @block_keywords)) do
+      Enum.flat_map(pairs, fn
+        {_, {:__block__, _, children}} when is_list(children) -> children
+        {_, child} when is_tuple(child) or is_list(child) -> List.wrap(child)
+        _ -> []
+      end)
+    else
       _ -> nil
-    end)
+    end
   end
+
+  defp block_keyword({{:__block__, _, [key]}, _}), do: key
+  defp block_keyword({key, _}), do: key
+  defp block_keyword(_), do: nil
 
   defp ast_node?({_form, _meta, _args}), do: true
   defp ast_node?({_, _}), do: true
