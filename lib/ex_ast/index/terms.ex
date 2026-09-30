@@ -72,8 +72,21 @@ defmodule ExAST.Index.Terms do
   def low_signal?(term), do: signal(term) == :low
 
   defp collect(ast, mode) do
+    ast = bare_kernel_calls(ast)
     {_ast, terms} = Macro.prewalk(ast, [], &visit(&1, &2, mode))
     Enum.uniq(literal_terms(ast) ++ terms)
+  end
+
+  # Matching treats `Kernel.is_nil(x)` as `is_nil(x)`, so index it the same way.
+  defp bare_kernel_calls(ast) do
+    Macro.prewalk(ast, fn
+      {{:., _, [{:__aliases__, _, [:Kernel]}, fun]}, meta, args}
+      when is_atom(fun) and is_list(args) ->
+        {fun, meta, args}
+
+      node ->
+        node
+    end)
   end
 
   defp visit({:defmodule, _meta, [module_ast, body]} = node, terms, mode) do

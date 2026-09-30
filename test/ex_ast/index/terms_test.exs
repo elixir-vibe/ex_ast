@@ -124,6 +124,18 @@ defmodule ExAST.Index.TermsTest do
   end
 
   describe "from_pattern/1" do
+    test "indexes a Kernel-qualified call like the bare call, both ways" do
+      assert MapSet.subset?(
+               Terms.from_pattern("Kernel.is_nil(_)"),
+               Terms.from_source("is_nil(x)")
+             )
+
+      assert MapSet.subset?(
+               Terms.from_pattern("is_nil(_)"),
+               Terms.from_source("Kernel.is_nil(x)")
+             )
+    end
+
     test "does not index wildcard function names in def patterns as literal names" do
       terms =
         quote do
