@@ -53,7 +53,7 @@ defmodule ExAST.CLI.Context do
 
   defp parse(source) do
     case Sourceror.parse_string(source) do
-      {:ok, ast} -> ast
+      {:ok, ast} -> {ast, Pattern.collect_aliases(ast)}
       {:error, _} -> nil
     end
   end
@@ -65,8 +65,8 @@ defmodule ExAST.CLI.Context do
 
   defp capture_styles(_match, _span, nil, _lines), do: []
 
-  defp capture_styles(%{captures: captures}, span, ast, lines) do
-    candidates = nodes_within(ast, span, lines)
+  defp capture_styles(%{captures: captures}, span, {ast, aliases}, lines) do
+    candidates = nodes_within(ast, span, aliases, lines)
 
     captures
     |> Enum.sort_by(&elem(&1, 0))
@@ -83,10 +83,10 @@ defmodule ExAST.CLI.Context do
 
   defp span_range(%{line: line}), do: {{line, 1}, {line, :infinity}}
 
-  defp nodes_within(term, span, lines) do
+  defp nodes_within(term, span, aliases, lines) do
     case node_range(term, lines) do
       nil ->
-        Enum.flat_map(children(term), &nodes_within(&1, span, lines))
+        Enum.flat_map(children(term), &nodes_within(&1, span, aliases, lines))
 
       range ->
         cond do
@@ -95,12 +95,12 @@ defmodule ExAST.CLI.Context do
 
           within?(range, span) ->
             [
-              {range, Pattern.normalize(term)}
-              | Enum.flat_map(children(term), &nodes_within(&1, span, lines))
+              {range, Pattern.normalize_node(term, aliases)}
+              | Enum.flat_map(children(term), &nodes_within(&1, span, aliases, lines))
             ]
 
           true ->
-            Enum.flat_map(children(term), &nodes_within(&1, span, lines))
+            Enum.flat_map(children(term), &nodes_within(&1, span, aliases, lines))
         end
     end
   end

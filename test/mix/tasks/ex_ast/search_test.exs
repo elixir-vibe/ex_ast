@@ -561,6 +561,27 @@ defmodule Mix.Tasks.ExAst.SearchTest do
     end
 
     @tag :tmp_dir
+    test "--color colors a capture written through an alias", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+
+      File.write!(file, """
+      alias Foo.Bar
+      IO.inspect(Bar)
+      """)
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["IO.inspect(x)", file, "-C", "0", "--color"])
+        end)
+
+      span = IO.ANSI.bright()
+      x = IO.ANSI.red() <> IO.ANSI.bright()
+      reset = IO.ANSI.reset()
+
+      assert output =~ "#{span}IO.inspect(#{reset}#{x}Bar#{reset}#{span})#{reset}\n"
+    end
+
+    @tag :tmp_dir
     test "raises when combined with a non-line output mode", %{tmp_dir: dir} do
       file = Path.join(dir, "sample.ex")
       File.write!(file, "IO.inspect(1)\n")
