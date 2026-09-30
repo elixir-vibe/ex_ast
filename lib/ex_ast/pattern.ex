@@ -781,6 +781,13 @@ defmodule ExAST.Pattern do
   # Ellipsis as single-node wildcard (matches any node in non-list position)
   defp do_match(_node, {:..., nil, _}, caps), do: {:ok, caps}
 
+  @special_forms [:__MODULE__, :__ENV__, :__DIR__, :__CALLER__, :__STACKTRACE__]
+
+  # Special forms like __MODULE__ are shaped like underscore variables but match only themselves
+  defp do_match(node, {name, nil, nil} = form, caps) when name in @special_forms do
+    if node == form, do: {:ok, caps}, else: :error
+  end
+
   # Named capture or underscore-prefixed non-capture
   defp do_match(node, {name, nil, nil}, caps) when is_atom(name) do
     case Atom.to_string(name) do
