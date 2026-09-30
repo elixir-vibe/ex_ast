@@ -13,6 +13,8 @@ defmodule Mix.Tasks.ExAst.Search do
     * `--count` — only print the number of matches
     * `--print name` — print only the value captured by `name`, one value per match; every pattern must declare `name`
     * `--count-by-file` — print per-file match counts, most matches first
+    * `-A n`, `-B n`, `-C n` (`--after-context`, `--before-context`, `--context`) — print `n` lines after, before, or around each match, grouped under a file heading like ripgrep; cannot be combined with `--count`, `--count-by-file`, `--json` or `--print`
+    * `--color` / `--no-color` — force colored context output on or off; by default it is colored only when writing to a terminal
     * `--limit n` — stop after returning this many matches
     * `--allow-broad` — allow unbounded broad searches like `_`
     * `--expand-imports` — resolve bare `import Mod` (and `import Mod,
@@ -116,8 +118,14 @@ defmodule Mix.Tasks.ExAst.Search do
     format: :string,
     json: :boolean,
     expand_imports: :boolean,
-    print: :string
+    print: :string,
+    context: :integer,
+    before_context: :integer,
+    after_context: :integer,
+    color: :boolean
   ]
+
+  @aliases [A: :after_context, B: :before_context, C: :context]
 
   @impl Mix.Task
   def run(args) do
@@ -130,7 +138,10 @@ defmodule Mix.Tasks.ExAst.Search do
 
   defp run_single(args) do
     {opts, positional, _} =
-      OptionParser.parse(args, strict: @global_switches ++ SelectorOptions.switches())
+      OptionParser.parse(args,
+        strict: @global_switches ++ SelectorOptions.switches(),
+        aliases: @aliases
+      )
 
     case positional do
       [pattern | paths] ->
@@ -146,7 +157,10 @@ defmodule Mix.Tasks.ExAst.Search do
     {head, segments} = segment_argv(args)
 
     {global_opts, head_positional, _} =
-      OptionParser.parse(head, strict: @global_switches ++ SelectorOptions.switches())
+      OptionParser.parse(head,
+        strict: @global_switches ++ SelectorOptions.switches(),
+        aliases: @aliases
+      )
 
     reject_head_selector_flags!(global_opts)
 
@@ -164,6 +178,7 @@ defmodule Mix.Tasks.ExAst.Search do
     {patterns, seg_global_opts, paths} = compile_segments(segments)
     global_opts = Keyword.merge(global_opts, seg_global_opts)
     reject_multi_unsupported!(global_opts)
+    reject_context_conflicts!(global_opts)
     validate_print!(global_opts[:print], Enum.map(patterns, & &1.pattern))
     paths = if paths == [], do: ["lib/"], else: paths
 
@@ -223,7 +238,8 @@ defmodule Mix.Tasks.ExAst.Search do
 
         {opts, positional, _} =
           OptionParser.parse(segment_args,
-            strict: @global_switches ++ SelectorOptions.switches()
+            strict: @global_switches ++ SelectorOptions.switches(),
+            aliases: @aliases
           )
 
         filter_opts = Keyword.take(opts, selector_keys)
@@ -276,6 +292,10 @@ defmodule Mix.Tasks.ExAst.Search do
         opts[:count] ->
           print_many_count(results, pattern_strs)
 
+        window = context_window(opts) ->
+          print_with_context(results, window, color?(opts))
+          Output.puts("\n#{length(pattern_strs)} pattern(s), #{length(results)} match(es)")
+
         true ->
           Enum.each(results, &print_tagged_match/1)
           Output.puts("\n#{length(pattern_strs)} pattern(s), #{length(results)} match(es)")
@@ -303,6 +323,7 @@ defmodule Mix.Tasks.ExAst.Search do
   defp do_search(paths, pattern, opts) do
     validate_pattern!(pattern)
     validate_print!(opts[:print], [pattern])
+    reject_context_conflicts!(opts)
 
     search_pattern =
       SelectorOptions.pattern(pattern, opts, &validate_pattern!/1, [
@@ -340,6 +361,10 @@ defmodule Mix.Tasks.ExAst.Search do
         opts[:count] ->
           Output.puts(length(results))
 
+        window = context_window(opts) ->
+          print_with_context(results, window, color?(opts))
+          Output.puts("\n#{length(results)} match(es)")
+
         true ->
           Enum.each(results, &print_match/1)
           Output.puts("\n#{length(results)} match(es)")
@@ -365,6 +390,119 @@ defmodule Mix.Tasks.ExAst.Search do
   end
 
   defp json?(opts), do: opts[:json] || opts[:format] == "json"
+
+  defp context_window(opts) do
+    if Enum.any?([:context, :before_context, :after_context], &Keyword.has_key?(opts, &1)) do
+      context = Keyword.get(opts, :context, 0)
+      {Keyword.get(opts, :before_context, context), Keyword.get(opts, :after_context, context)}
+    end
+  end
+
+  defp reject_context_conflicts!(opts) do
+    conflict? = json?(opts) || opts[:print] || opts[:count] || opts[:count_by_file]
+
+    if context_window(opts) && conflict? do
+      Mix.raise(
+        "-A, -B and -C cannot be combined with --count, --count-by-file, --json or --print"
+      )
+    end
+  end
+
+  defp color?(opts), do: Keyword.get_lazy(opts, :color, &Output.ansi?/0)
+
+  defp print_with_context(results, window, color?) do
+    results
+    |> Enum.chunk_by(& &1.file)
+    |> Enum.with_index()
+    |> Enum.each(fn {[%{file: file} | _] = matches, index} ->
+      if index > 0, do: Output.puts()
+      print_file_context(file, matches, window, color?)
+    end)
+  end
+
+  defp print_file_context(file, matches, {before, after_}, color?) do
+    lines = file |> File.stream!() |> Enum.map(&String.trim_trailing(&1, "\n")) |> List.to_tuple()
+    spans = matches |> Enum.map(&match_span/1) |> Enum.sort()
+
+    highlights =
+      matches
+      |> Enum.flat_map(&match_highlights/1)
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+
+    Output.puts(IO.ANSI.format_fragment([:magenta, file, :reset], color?))
+
+    spans
+    |> Enum.map(fn {first, last} ->
+      {max(first - before, 1), min(last + after_, tuple_size(lines))}
+    end)
+    |> merge_groups()
+    |> Enum.with_index()
+    |> Enum.each(fn {group, index} ->
+      if index > 0, do: Output.puts("--")
+      print_group(group, lines, highlights, color?)
+    end)
+  end
+
+  defp match_span(%{range: %{start: start, end: end_}, line: line}) do
+    {start[:line] || line, end_[:line] || line}
+  end
+
+  defp match_span(%{line: line}), do: {line, line}
+
+  defp match_highlights(match) do
+    {first, last} = match_span(match)
+    {from, to} = match_columns(match)
+
+    for line <- first..last do
+      {line, {if(line == first, do: from, else: 1), if(line == last, do: to, else: :infinity)}}
+    end
+  end
+
+  defp match_columns(%{range: %{start: start, end: end_}}),
+    do: {start[:column] || 1, end_[:column] || :infinity}
+
+  defp match_columns(_match), do: {1, :infinity}
+
+  defp merge_groups(groups) do
+    groups
+    |> Enum.reduce([], fn
+      {first, last}, [{prev_first, prev_last} | rest] when first <= prev_last + 1 ->
+        [{prev_first, max(last, prev_last)} | rest]
+
+      group, acc ->
+        [group | acc]
+    end)
+    |> Enum.reverse()
+  end
+
+  defp print_group({first, last}, lines, highlights, color?) do
+    for number <- first..last do
+      text = elem(lines, number - 1)
+
+      line =
+        case Map.fetch(highlights, number) do
+          {:ok, columns} -> [":" | highlight(text, columns)]
+          :error -> ["-", text]
+        end
+
+      Output.puts(IO.ANSI.format_fragment([:green, "#{number}", :reset | line], color?))
+    end
+  end
+
+  defp highlight(text, columns) do
+    text
+    |> String.graphemes()
+    |> Enum.with_index(1)
+    |> Enum.chunk_by(fn {_char, column} -> highlighted?(column, columns) end)
+    |> Enum.map(fn [{_char, column} | _] = chunk ->
+      chunk_text = Enum.map_join(chunk, &elem(&1, 0))
+      if highlighted?(column, columns), do: [:red, :bright, chunk_text, :reset], else: chunk_text
+    end)
+  end
+
+  defp highlighted?(column, columns) do
+    Enum.any?(columns, fn {from, to} -> column >= from and column < to end)
+  end
 
   defp print_match(%{file: file, line: line, source: source, captures: captures}) do
     Output.puts("#{file}:#{line}")
