@@ -6,9 +6,14 @@
 
 - `mix ex_ast.search --print name` prints only the value captured by `name`,
   one value per match (#16).
+- `mix ex_ast.search -A n`, `-B n` and `-C n` print context lines around each
+  match, ripgrep-style, with colored match spans and captures in a terminal
+  (#17).
 
 ### Fixed
 
+- `__MODULE__`, `__ENV__`, `__DIR__`, `__CALLER__` and `__STACKTRACE__` in a
+  pattern now match only themselves instead of acting as wildcards (#18).
 - Child selectors no longer drop positional arguments of calls ending in a
   keyword list, and select every block keyword body (#15).
 - Child selectors now see the `do:` body of one-line calls that also take

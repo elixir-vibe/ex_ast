@@ -79,6 +79,26 @@ defmodule ExAST.PatternTest do
     end
   end
 
+  describe "special forms" do
+    test "__MODULE__ matches only itself, not any node" do
+      assert {:ok, %{fun: _}} = match!("apply(__MODULE__, :f, [])", "apply(__MODULE__, fun, _)")
+      assert :error = match!("apply(Other, :f, [])", "apply(__MODULE__, fun, _)")
+      assert :error = match!("apply(module, :f, [])", "apply(__MODULE__, fun, _)")
+    end
+
+    test "each special form matches only itself" do
+      forms = ~w(__MODULE__ __ENV__ __DIR__ __CALLER__ __STACKTRACE__)
+
+      for form <- forms, other <- forms do
+        result = match!("IO.inspect(#{other})", "IO.inspect(#{form})")
+
+        if form == other,
+          do: assert({:ok, %{}} = result),
+          else: assert(:error = result)
+      end
+    end
+  end
+
   describe "captures" do
     test "single capture" do
       assert {:ok, caps} = match!("IO.inspect(data)", "IO.inspect(expr)")
