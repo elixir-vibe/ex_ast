@@ -181,7 +181,7 @@ defmodule ExAST.Patcher do
     patches =
       Enum.map(matches, fn %{range: range, captures: captures} ->
         substituted = Pattern.substitute(replacement_ast, captures)
-        %{range: range, change: substituted |> restore_meta() |> Macro.to_string()}
+        %{range: range, change: ExAST.AST.to_string(substituted)}
       end)
 
     Sourceror.patch_string(source, patches)

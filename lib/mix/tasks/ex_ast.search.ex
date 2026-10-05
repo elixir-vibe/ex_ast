@@ -464,12 +464,5 @@ defmodule Mix.Tasks.ExAst.Search do
     end
   end
 
-  defp render_capture(value), do: value |> restore_meta() |> Macro.to_string()
-
-  defp restore_meta(ast) do
-    Macro.prewalk(ast, fn
-      {form, nil, args} -> {form, [], args}
-      other -> other
-    end)
-  end
+  defp render_capture(value), do: ExAST.AST.to_string(value)
 end

@@ -37,7 +37,7 @@ defimpl Jason.Encoder, for: ExAST.CompiledPattern do
   end
 
   defp render(value) when is_binary(value), do: value
-  defp render(value), do: Macro.to_string(value)
+  defp render(value), do: ExAST.AST.to_string(value)
 end
 
 defimpl Jason.Encoder, for: ExAST.Diff.Edit do

@@ -12,6 +12,10 @@
 
 ### Fixed
 
+- String literals, heredocs, interpolated strings and quoted atoms match by value,
+  so escape sequences like `\n` in a pattern match the same string in source;
+  sigil contents still compare as written (#19). Replacements keep the escapes
+  of captured and templated strings.
 - `__MODULE__`, `__ENV__`, `__DIR__`, `__CALLER__` and `__STACKTRACE__` in a
   pattern now match only themselves instead of acting as wildcards (#18).
 - Child selectors no longer drop positional arguments of calls ending in a
