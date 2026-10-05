@@ -15,6 +15,8 @@ defmodule Mix.Tasks.ExAst.Search do
       every pattern must declare `name`. Takes precedence over `--count` and
       `--count-by-file`; `--json` takes precedence over it
     * `--count-by-file` — print per-file match counts, most matches first
+    * `-A n`, `-B n`, `-C n` (`--after-context`, `--before-context`, `--context`) — print `n` lines after, before, or around each match, grouped under a file heading like ripgrep; cannot be combined with `--count`, `--count-by-file`, `--json` or `--print`
+    * `--color` / `--no-color` — force colored context output on or off; by default it is colored only when writing to a terminal
     * `--limit n` — stop after returning this many matches
     * `--allow-broad` — allow unbounded broad searches like `_`
     * `--expand-imports` — resolve bare `import Mod` (and `import Mod,
@@ -106,6 +108,7 @@ defmodule Mix.Tasks.ExAst.Search do
 
   use Mix.Task
 
+  alias ExAST.CLI.Context
   alias ExAST.CLI.JSON
   alias ExAST.CLI.Output
   alias ExAST.CLI.SelectorOptions
@@ -118,8 +121,14 @@ defmodule Mix.Tasks.ExAst.Search do
     format: :string,
     json: :boolean,
     expand_imports: :boolean,
-    print: :string
+    print: :string,
+    context: :integer,
+    before_context: :integer,
+    after_context: :integer,
+    color: :boolean
   ]
+
+  @aliases [A: :after_context, B: :before_context, C: :context]
 
   @impl Mix.Task
   def run(args) do
@@ -132,7 +141,10 @@ defmodule Mix.Tasks.ExAst.Search do
 
   defp run_single(args) do
     {opts, positional, _} =
-      OptionParser.parse(args, strict: @global_switches ++ SelectorOptions.switches())
+      OptionParser.parse(args,
+        strict: @global_switches ++ SelectorOptions.switches(),
+        aliases: @aliases
+      )
 
     case positional do
       [pattern | paths] ->
@@ -148,7 +160,10 @@ defmodule Mix.Tasks.ExAst.Search do
     {head, segments} = segment_argv(args)
 
     {global_opts, head_positional, _} =
-      OptionParser.parse(head, strict: @global_switches ++ SelectorOptions.switches())
+      OptionParser.parse(head,
+        strict: @global_switches ++ SelectorOptions.switches(),
+        aliases: @aliases
+      )
 
     reject_head_selector_flags!(global_opts)
 
@@ -166,6 +181,7 @@ defmodule Mix.Tasks.ExAst.Search do
     {patterns, seg_global_opts, paths} = compile_segments(segments)
     global_opts = Keyword.merge(global_opts, seg_global_opts)
     reject_multi_unsupported!(global_opts)
+    reject_context_conflicts!(global_opts)
     validate_print!(global_opts[:print], Enum.map(patterns, & &1.pattern))
     paths = if paths == [], do: ["lib/"], else: paths
 
@@ -225,7 +241,8 @@ defmodule Mix.Tasks.ExAst.Search do
 
         {opts, positional, _} =
           OptionParser.parse(segment_args,
-            strict: @global_switches ++ SelectorOptions.switches()
+            strict: @global_switches ++ SelectorOptions.switches(),
+            aliases: @aliases
           )
 
         filter_opts = Keyword.take(opts, selector_keys)
@@ -278,6 +295,10 @@ defmodule Mix.Tasks.ExAst.Search do
         opts[:count] ->
           print_many_count(results, pattern_strs)
 
+        window = context_window(opts) ->
+          Context.print(results, window, color?(opts))
+          Output.puts("\n#{length(pattern_strs)} pattern(s), #{length(results)} match(es)")
+
         true ->
           Enum.each(results, &print_tagged_match/1)
           Output.puts("\n#{length(pattern_strs)} pattern(s), #{length(results)} match(es)")
@@ -305,6 +326,7 @@ defmodule Mix.Tasks.ExAst.Search do
   defp do_search(paths, pattern, opts) do
     validate_pattern!(pattern)
     validate_print!(opts[:print], [pattern])
+    reject_context_conflicts!(opts)
 
     search_pattern =
       SelectorOptions.pattern(pattern, opts, &validate_pattern!/1, [
@@ -342,6 +364,10 @@ defmodule Mix.Tasks.ExAst.Search do
         opts[:count] ->
           Output.puts(length(results))
 
+        window = context_window(opts) ->
+          Context.print(results, window, color?(opts))
+          Output.puts("\n#{length(results)} match(es)")
+
         true ->
           Enum.each(results, &print_match/1)
           Output.puts("\n#{length(results)} match(es)")
@@ -367,6 +393,25 @@ defmodule Mix.Tasks.ExAst.Search do
   end
 
   defp json?(opts), do: opts[:json] || opts[:format] == "json"
+
+  defp context_window(opts) do
+    if Enum.any?([:context, :before_context, :after_context], &Keyword.has_key?(opts, &1)) do
+      context = Keyword.get(opts, :context, 0)
+      {Keyword.get(opts, :before_context, context), Keyword.get(opts, :after_context, context)}
+    end
+  end
+
+  defp reject_context_conflicts!(opts) do
+    conflict? = json?(opts) || opts[:print] || opts[:count] || opts[:count_by_file]
+
+    if context_window(opts) && conflict? do
+      Mix.raise(
+        "-A, -B and -C cannot be combined with --count, --count-by-file, --json or --print"
+      )
+    end
+  end
+
+  defp color?(opts), do: Keyword.get_lazy(opts, :color, &Output.ansi?/0)
 
   defp print_match(%{file: file, line: line, source: source, captures: captures}) do
     Output.puts("#{file}:#{line}")

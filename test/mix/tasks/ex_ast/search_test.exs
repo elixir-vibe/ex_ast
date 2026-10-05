@@ -344,6 +344,258 @@ defmodule Mix.Tasks.ExAst.SearchTest do
     end
   end
 
+  describe "context lines" do
+    @tag :tmp_dir
+    test "-C prints the whole match span with context under a file heading", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+
+      File.write!(file, """
+      defmodule A do
+        def f(x) do
+          IO.inspect(x,
+            label: "a")
+        end
+
+        def g(y) do
+          y
+        end
+
+        def h(z) do
+          IO.inspect(z)
+        end
+      end
+      """)
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["IO.inspect(...)", file, "-C", "1"])
+        end)
+
+      assert output == """
+             #{file}
+             2-  def f(x) do
+             3:    IO.inspect(x,
+             4:      label: "a")
+             5-  end
+             --
+             11-  def h(z) do
+             12:    IO.inspect(z)
+             13-  end
+
+             2 match(es)
+             """
+    end
+
+    @tag :tmp_dir
+    test "-A and -B merge groups that overlap or touch", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+
+      File.write!(file, """
+      IO.inspect(1)
+      IO.inspect(2)
+      :ok
+      :ok
+      IO.inspect(3)
+      """)
+
+      after_output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["IO.inspect(_)", file, "-A", "1"])
+        end)
+
+      assert after_output == """
+             #{file}
+             1:IO.inspect(1)
+             2:IO.inspect(2)
+             3-:ok
+             --
+             5:IO.inspect(3)
+
+             3 match(es)
+             """
+
+      Mix.Task.reenable("ex_ast.search")
+
+      before_output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["IO.inspect(_)", file, "--before-context", "2"])
+        end)
+
+      assert before_output == """
+             #{file}
+             1:IO.inspect(1)
+             2:IO.inspect(2)
+             3-:ok
+             4-:ok
+             5:IO.inspect(3)
+
+             3 match(es)
+             """
+    end
+
+    @tag :tmp_dir
+    test "separates files with a blank line", %{tmp_dir: dir} do
+      first = Path.join(dir, "a.ex")
+      second = Path.join(dir, "b.ex")
+      File.write!(first, ":ok\nIO.inspect(1)\n")
+      File.write!(second, "IO.inspect(2)\n:ok")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["IO.inspect(_)", first, second, "--context", "1"])
+        end)
+
+      assert output == """
+             #{first}
+             1-:ok
+             2:IO.inspect(1)
+
+             #{second}
+             1:IO.inspect(2)
+             2-:ok
+
+             2 match(es)
+             """
+    end
+
+    @tag :tmp_dir
+    test "works with several -e patterns", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "IO.inspect(1)\n:ok\ndbg(2)\n")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["-e", "dbg(_)", "-e", "IO.inspect(_)", file, "-C", "1"])
+        end)
+
+      assert output == """
+             #{file}
+             1:IO.inspect(1)
+             2-:ok
+             3:dbg(2)
+
+             2 pattern(s), 2 match(es)
+             """
+    end
+
+    @tag :tmp_dir
+    test "--color marks the path, line numbers and the exact match span", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+
+      File.write!(file, """
+      {IO.inspect(1), IO.inspect(2)}
+      IO.inspect(x,
+        label: "a")
+      :ok
+      """)
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["IO.inspect(...)", file, "-C", "0", "--color"])
+        end)
+
+      path = IO.ANSI.magenta()
+      number = IO.ANSI.green()
+      match = IO.ANSI.bright()
+      reset = IO.ANSI.reset()
+
+      assert output == """
+             #{path}#{file}#{reset}
+             #{number}1#{reset}:{#{match}IO.inspect(1)#{reset}, #{match}IO.inspect(2)#{reset}}
+             #{number}2#{reset}:#{match}IO.inspect(x,#{reset}
+             #{number}3#{reset}:#{match}  label: "a")#{reset}
+
+             3 match(es)
+             """
+    end
+
+    @tag :tmp_dir
+    test "--color gives each capture its own color inside the span", %{tmp_dir: dir} do
+      file = Path.join(dir, "config.exs")
+
+      File.write!(file, """
+      config :ripple, Ripple.Maps,
+        disabled: false
+      """)
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["config app, key, opts", file, "-C", "0", "--color"])
+        end)
+
+      path = IO.ANSI.magenta()
+      number = IO.ANSI.green()
+      span = IO.ANSI.bright()
+      app = IO.ANSI.red() <> IO.ANSI.bright()
+      key = IO.ANSI.yellow() <> IO.ANSI.bright()
+      opts = IO.ANSI.cyan() <> IO.ANSI.bright()
+      reset = IO.ANSI.reset()
+
+      assert output == """
+             #{path}#{file}#{reset}
+             #{number}1#{reset}:#{span}config #{reset}#{app}:ripple#{reset}#{span}, #{reset}#{key}Ripple.Maps#{reset}#{span},#{reset}
+             #{number}2#{reset}:#{span}  #{reset}#{opts}disabled: false#{reset}
+
+             1 match(es)
+             """
+    end
+
+    @tag :tmp_dir
+    test "--color ends a boolean capture at the literal", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "Map.put(m, :on, false)\n")
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["Map.put(map, key, value)", file, "-C", "0", "--color"])
+        end)
+
+      span = IO.ANSI.bright()
+      key = IO.ANSI.red() <> IO.ANSI.bright()
+      map = IO.ANSI.yellow() <> IO.ANSI.bright()
+      value = IO.ANSI.cyan() <> IO.ANSI.bright()
+      reset = IO.ANSI.reset()
+
+      assert output =~
+               "#{span}Map.put(#{reset}#{map}m#{reset}#{span}, #{reset}#{key}:on#{reset}#{span}, #{reset}#{value}false#{reset}#{span})#{reset}\n"
+    end
+
+    @tag :tmp_dir
+    test "--color colors a capture written through an alias", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+
+      File.write!(file, """
+      alias Foo.Bar
+      IO.inspect(Bar)
+      """)
+
+      output =
+        capture_io(fn ->
+          Mix.Task.run("ex_ast.search", ["IO.inspect(x)", file, "-C", "0", "--color"])
+        end)
+
+      span = IO.ANSI.bright()
+      x = IO.ANSI.red() <> IO.ANSI.bright()
+      reset = IO.ANSI.reset()
+
+      assert output =~ "#{span}IO.inspect(#{reset}#{x}Bar#{reset}#{span})#{reset}\n"
+    end
+
+    @tag :tmp_dir
+    test "raises when combined with a non-line output mode", %{tmp_dir: dir} do
+      file = Path.join(dir, "sample.ex")
+      File.write!(file, "IO.inspect(1)\n")
+
+      for flag <- [["--count"], ["--count-by-file"], ["--json"], ["--print", "x"]] do
+        Mix.Task.reenable("ex_ast.search")
+
+        assert_raise Mix.Error, ~r/-A, -B and -C/, fn ->
+          Mix.Task.run("ex_ast.search", ["IO.inspect(x)", file, "-C", "1" | flag])
+        end
+      end
+    end
+  end
+
   describe "multiple -e patterns" do
     @tag :tmp_dir
     test "runs several patterns in one invocation, tagged", %{tmp_dir: dir} do

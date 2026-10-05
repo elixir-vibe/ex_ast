@@ -22,6 +22,8 @@ defmodule ExAST.CLI.Output do
     end
   end
 
+  def ansi?, do: IO.ANSI.enabled?() and real_stdout?()
+
   def inspect(term, opts \\ []) do
     term
     |> Kernel.inspect(opts)
