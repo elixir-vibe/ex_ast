@@ -33,7 +33,7 @@ defmodule ExAST.CLI.JSON do
   defp normalize_value(_key, value), do: normalize(value)
 
   defp render_ast(value) do
-    Macro.to_string(value)
+    ExAST.AST.to_string(value)
   rescue
     _ -> inspect(value)
   end
