@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.2 - 2026-10-05
+
 ### Fixed
 
 - Dynamic import options such as `import Mod, unquote(opts)` no longer crash
