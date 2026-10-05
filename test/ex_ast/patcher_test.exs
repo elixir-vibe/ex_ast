@@ -210,6 +210,32 @@ defmodule ExAST.PatcherTest do
       refute result =~ "IO.inspect"
     end
 
+    test "keeps escape sequences in a captured string" do
+      source = ~S|IO.puts("a\n\tb \"q\"")| <> "\n"
+      result = Patcher.replace_all(source, "IO.puts(x)", "Logger.info(x)")
+      assert result == ~S|Logger.info("a\n\tb \"q\"")| <> "\n"
+    end
+
+    test "keeps escape sequences in a captured interpolated string" do
+      source = ~S|IO.puts("dir\\file \#{literal} #{name}\n\t\"q\"")| <> "\n"
+      result = Patcher.replace_all(source, "IO.puts(x)", "Logger.info(x)")
+      assert result == ~S|Logger.info("dir\\file \#{literal} #{name}\n\t\"q\"")| <> "\n"
+    end
+
+    test "keeps escape sequences in an interpolated replacement string" do
+      source = "IO.puts(name)\n"
+      result = Patcher.replace_all(source, "IO.puts(x)", ~S|Logger.info("dir\\#{x}\n")|)
+      assert result == ~S|Logger.info("dir\\#{name}\n")| <> "\n"
+    end
+
+    test "leaves sigils and bitstrings in a replacement as written" do
+      source = "IO.puts(name)\n"
+      replacement = ~S|Logger.info({~r/a\n#{x}/, ~S"raw\n", <<1::8, "a\nb">>})|
+
+      assert Patcher.replace_all(source, "IO.puts(x)", replacement) ==
+               ~S|Logger.info({~r/a\n#{name}/, ~S"raw\n", <<1::8, "a\nb">>})| <> "\n"
+    end
+
     test "replaces multiple matches" do
       source = """
       IO.inspect(a)

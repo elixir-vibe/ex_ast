@@ -97,6 +97,14 @@ defmodule ExAST.Index.TermsTest do
       refute Enum.any?(terms, &String.starts_with?(&1, "call.local:__block__/"))
     end
 
+    test "indexes quoted atoms with their escapes resolved, like patterns" do
+      source_terms = Terms.from_source(~S|f(:"a\n")|)
+      pattern_terms = Terms.from_pattern(~S|f(:"a\n")|)
+
+      assert MapSet.member?(source_terms, "atom:a\n")
+      assert MapSet.subset?(pattern_terms, source_terms)
+    end
+
     test "indexes source call arity terms for pipe-equivalent matching" do
       pipe_terms =
         quote do

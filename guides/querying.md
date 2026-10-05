@@ -72,6 +72,12 @@ Filter the current selection without changing it:
 | `any([...])` | Any nested predicate matches |
 | `all([...])` | All nested predicates match |
 
+The direct children of a call with a block (`do`, `else`, `after`, `rescue`,
+`catch`) are the statements of those blocks, whether written as `do ... end` or
+`do:`. The rest of the call is not a child: an `if` condition, a `def` head, or
+`for` generators and options such as `into:`. For any other call, the children
+are its arguments.
+
 Combine with `not`, `and`, `or`:
 
 ```elixir

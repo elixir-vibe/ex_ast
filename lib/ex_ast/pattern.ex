@@ -249,7 +249,13 @@ defmodule ExAST.Pattern do
 
   @doc false
   @spec normalize(Macro.t()) :: Macro.t()
+  def normalize({:__block__, meta, [literal]}) when is_binary(literal) or is_atom(literal),
+    do: unescape_literal(literal, meta)
+
   def normalize({:__block__, _meta, [inner]}), do: normalize(inner)
+
+  def normalize({:<<>>, meta, parts}) when is_list(parts),
+    do: {:<<>>, nil, parts |> unescape_parts(meta) |> normalize()}
 
   def normalize({:|>, _meta, [left, {form, meta2, args}]}) when is_list(args),
     do: normalize({form, meta2, [left | args]})
@@ -286,6 +292,24 @@ defmodule ExAST.Pattern do
   defp normalize_entry({key, value}), do: {normalize(key), normalize(value)}
   defp normalize_entry(node), do: normalize(node)
 
+  # Sourceror parses with `unescape: false`, so delimited strings and quoted atoms keep
+  # escapes like `\n` raw while patterns resolve them. Sigil contents stay raw on both sides.
+  @doc false
+  def unescape_literal(literal, meta) do
+    cond do
+      !meta[:delimiter] -> literal
+      is_binary(literal) -> Macro.unescape_string(literal)
+      true -> literal |> Atom.to_string() |> Macro.unescape_string() |> String.to_atom()
+    end
+  end
+
+  defp unescape_parts(parts, meta) do
+    Enum.map(parts, fn
+      part when is_binary(part) -> unescape_literal(part, meta)
+      part -> part
+    end)
+  end
+
   # Sourceror encodes a genuine 2-tuple literal as `{:__block__, _, [{a, b}]}`
   # (the extra block carries metadata a bare 2-tuple has no slot for). Fold it
   # into the variadic `{:{}, _, [a, b]}` form so all tuple arities share one
@@ -293,7 +317,14 @@ defmodule ExAST.Pattern do
   defp normalize({:__block__, _meta, [{a, b}]}, alias_env),
     do: {:{}, nil, [normalize(a, alias_env), normalize(b, alias_env)]}
 
+  defp normalize({:__block__, meta, [literal]}, _alias_env)
+       when is_binary(literal) or is_atom(literal),
+       do: unescape_literal(literal, meta)
+
   defp normalize({:__block__, _meta, [inner]}, alias_env), do: normalize(inner, alias_env)
+
+  defp normalize({:<<>>, meta, parts}, alias_env) when is_list(parts),
+    do: {:<<>>, nil, parts |> unescape_parts(meta) |> normalize(alias_env)}
 
   defp normalize({:|>, _meta, [left, {form, meta2, args}]}, alias_env) when is_list(args),
     do: normalize({form, meta2, [left | args]}, alias_env)
@@ -789,6 +820,13 @@ defmodule ExAST.Pattern do
 
   # Ellipsis as single-node wildcard (matches any node in non-list position)
   defp do_match(_node, {:..., nil, _}, caps), do: {:ok, caps}
+
+  @special_forms [:__MODULE__, :__ENV__, :__DIR__, :__CALLER__, :__STACKTRACE__]
+
+  # Special forms like __MODULE__ are shaped like underscore variables but match only themselves
+  defp do_match(node, {name, nil, nil} = form, caps) when name in @special_forms do
+    if node == form, do: {:ok, caps}, else: :error
+  end
 
   # Named capture or underscore-prefixed non-capture
   defp do_match(node, {name, nil, nil}, caps) when is_atom(name) do
