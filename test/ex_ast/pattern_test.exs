@@ -1239,4 +1239,20 @@ defmodule ExAST.PatternTest do
       refute result =~ "dbg"
     end
   end
+
+  describe "Kernel calls" do
+    test "a Kernel-qualified call matches the bare call, both ways" do
+      assert {:ok, %{x: _}} = match!("is_nil(value)", "Kernel.is_nil(x)")
+      assert {:ok, %{x: _}} = match!("Kernel.is_nil(value)", "is_nil(x)")
+      assert :error = match!("Kernel.is_nil(value)", "is_atom(x)")
+    end
+
+    test "a Kernel-qualified operator matches the operator" do
+      assert {:ok, %{}} = match!("a + b", "Kernel.+(a, b)")
+    end
+
+    test "other modules named Kernel.* are not treated as Kernel" do
+      assert :error = match!("Kernel.SpecialForms.quote(x)", "quote(x)")
+    end
+  end
 end

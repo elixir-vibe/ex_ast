@@ -3,6 +3,13 @@ defmodule ExASTTest do
 
   describe "search/2" do
     @tag :tmp_dir
+    test "a Kernel-qualified pattern finds bare calls", %{tmp_dir: dir} do
+      File.write!(Path.join(dir, "a.ex"), "is_nil(x)\n")
+
+      assert [_] = ExAST.search(dir, "Kernel.is_nil(_)")
+    end
+
+    @tag :tmp_dir
     test "finds matches across files", %{tmp_dir: dir} do
       File.write!(Path.join(dir, "a.ex"), """
       IO.inspect(x)
