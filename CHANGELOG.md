@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- `mix ex_ast.search --print name` prints only the value captured by `name`,
+  one value per match (#16).
+
 ### Fixed
 
 - Child selectors no longer drop positional arguments of calls ending in a
