@@ -996,9 +996,10 @@ defmodule ExAST.Patcher do
 
   defp do_block_children(args) do
     with [_ | _] = pairs <- List.last(args),
-         keys = Enum.map(pairs, &block_keyword/1),
-         true <- :do in keys and Enum.all?(keys, &(&1 in @block_keywords)) do
-      Enum.flat_map(pairs, fn
+         true <- Enum.any?(pairs, &(block_keyword(&1) == :do)) do
+      pairs
+      |> Enum.filter(&(block_keyword(&1) in @block_keywords))
+      |> Enum.flat_map(fn
         {_, {:__block__, _, children}} when is_list(children) -> children
         {_, child} when is_tuple(child) or is_list(child) -> List.wrap(child)
         _ -> []
