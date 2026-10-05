@@ -20,61 +20,45 @@ defmodule ExAST.AST do
 
   defp do_strip_sourceror_meta(other), do: other
 
-  @doc """
-  Renders AST as source like `Macro.to_string/1`, keeping the escapes of
-  interpolated strings.
+  # `Macro.to_string/1` writes interpolated string parts as is, so a part holding
+  # a backslash, `\#{` or a newline would render as a different string.
+  @interpolation_escapes %{
+    "\\" => "\\\\",
+    "\#{" => "\\\#{",
+    "\n" => "\\n",
+    "\r" => "\\r",
+    "\t" => "\\t"
+  }
 
-  `Macro.to_string/1` writes interpolated string parts as is, so a part holding a
-  backslash, `\#{` or a newline renders as a different string. Sigil contents are
-  raw source and stay untouched.
-  """
+  @doc "Renders AST like `Macro.to_string/1`, keeping interpolated strings' escapes."
   @spec to_string(Macro.t()) :: String.t()
-  def to_string(ast), do: ast |> escape_interpolations() |> Macro.to_string()
+  def to_string(ast), do: ast |> Macro.prewalk(&escape_interpolation/1) |> Macro.to_string()
 
-  defp escape_interpolations({name, meta, [{:<<>>, string_meta, parts}, modifiers]})
-       when is_atom(name) and is_list(parts) and is_list(modifiers) do
-    if sigil?(name) do
-      parts = Enum.map(parts, &if(is_binary(&1), do: &1, else: escape_interpolations(&1)))
-      {name, meta, [{:<<>>, string_meta, parts}, modifiers]}
-    else
-      {name, meta, escape_interpolations([{:<<>>, string_meta, parts}, modifiers])}
-    end
+  # Sigil contents are raw source: mark them so the walk leaves them alone.
+  defp escape_interpolation({name, meta, [{:<<>>, string_meta, parts}, modifiers]} = node)
+       when is_atom(name) and is_list(modifiers) do
+    if String.starts_with?(Atom.to_string(name), "sigil_"),
+      do: {name, meta, [{:<<>>, [ex_ast_raw: true] ++ List.wrap(string_meta), parts}, modifiers]},
+      else: node
   end
 
-  defp escape_interpolations({:<<>>, meta, parts}) when is_list(parts) do
-    if interpolated_string?(parts),
+  defp escape_interpolation({:<<>>, meta, parts} = node) when is_list(parts) do
+    if !meta[:ex_ast_raw] and Enum.all?(parts, &string_part?/1),
       do: {:<<>>, meta, Enum.map(parts, &escape_part/1)},
-      else: {:<<>>, meta, escape_interpolations(parts)}
+      else: node
   end
 
-  defp escape_interpolations({form, meta, args}),
-    do: {escape_interpolations(form), meta, escape_interpolations(args)}
+  defp escape_interpolation(node), do: node
 
-  defp escape_interpolations({left, right}),
-    do: {escape_interpolations(left), escape_interpolations(right)}
+  defp string_part?(part) when is_binary(part), do: true
 
-  defp escape_interpolations(list) when is_list(list),
-    do: Enum.map(list, &escape_interpolations/1)
-
-  defp escape_interpolations(other), do: other
-
-  defp sigil?(name), do: name |> Atom.to_string() |> String.starts_with?("sigil_")
-
-  defp interpolated_string?(parts), do: Enum.all?(parts, &(is_binary(&1) or interpolation?(&1)))
-
-  defp interpolation?({:"::", _, [{{:., _, [Kernel, :to_string]}, _, [_]}, {:binary, _, _}]}),
+  defp string_part?({:"::", _, [{{:., _, [Kernel, :to_string]}, _, [_]}, {:binary, _, _}]}),
     do: true
 
-  defp interpolation?(_part), do: false
+  defp string_part?(_part), do: false
 
-  defp escape_part(part) when is_binary(part) do
-    part
-    |> String.replace("\\", "\\\\")
-    |> String.replace("\#{", "\\\#{")
-    |> String.replace("\n", "\\n")
-    |> String.replace("\t", "\\t")
-    |> String.replace("\r", "\\r")
-  end
+  defp escape_part(part) when is_binary(part),
+    do: String.replace(part, Map.keys(@interpolation_escapes), &@interpolation_escapes[&1])
 
-  defp escape_part(interpolation), do: escape_interpolations(interpolation)
+  defp escape_part(interpolation), do: interpolation
 end
