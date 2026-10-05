@@ -1254,5 +1254,17 @@ defmodule ExAST.PatternTest do
     test "other modules named Kernel.* are not treated as Kernel" do
       assert :error = match!("Kernel.SpecialForms.quote(x)", "quote(x)")
     end
+
+    test "replace keeps a Kernel-qualified call as written" do
+      assert ExAST.Patcher.replace_all("log(Kernel.to_string(x))", "log(v)", "Logger.info(v)") ==
+               "Logger.info(Kernel.to_string(x))"
+
+      assert ExAST.Patcher.replace_all("log(&Kernel.is_nil/1)", "log(v)", "Logger.info(v)") ==
+               "Logger.info(&Kernel.is_nil/1)"
+    end
+
+    test "an aliased Kernel matches the bare call" do
+      assert [_] = ExAST.Patcher.find_all("alias Kernel, as: K\nK.is_nil(x)", "is_nil(_)")
+    end
   end
 end

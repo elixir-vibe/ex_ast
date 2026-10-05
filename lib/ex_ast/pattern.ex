@@ -263,11 +263,6 @@ defmodule ExAST.Pattern do
   def normalize({:|>, _meta, [left, {form, meta2, nil}]}),
     do: normalize({form, meta2, [left]})
 
-  # `Kernel` is imported everywhere, so `Kernel.is_nil(x)` and `is_nil(x)` are the same call.
-  def normalize({{:., _, [{:__aliases__, _, [:Kernel]}, fun]}, meta, args})
-      when is_atom(fun) and is_list(args),
-      do: normalize({fun, meta, args})
-
   def normalize({form, _meta, context}) when is_atom(form) and is_atom(context),
     do: {form, nil, nil}
 
@@ -331,10 +326,6 @@ defmodule ExAST.Pattern do
 
   defp normalize({:|>, _meta, [left, {form, meta2, nil}]}, alias_env),
     do: normalize({form, meta2, [left]}, alias_env)
-
-  defp normalize({{:., _, [{:__aliases__, _, [:Kernel]}, fun]}, meta, args}, alias_env)
-       when is_atom(fun) and is_list(args),
-       do: normalize({fun, meta, args}, alias_env)
 
   defp normalize({:__aliases__, meta, [name]} = node, alias_env) when is_atom(name) do
     {:__aliases__, _meta, parts} = expand_alias_node(node, meta, name, alias_env)
@@ -868,6 +859,24 @@ defmodule ExAST.Pattern do
       do_match(sargs, pargs, caps)
     end
   end
+
+  # `Kernel` is imported everywhere, so `Kernel.is_nil(x)` and `is_nil(x)` match
+  # each other. Compared here, not in normalize, so captures keep the source form.
+  defp do_match(
+         {{:., nil, [{:__aliases__, nil, [:Kernel]}, sfun]}, nil, sargs},
+         {pfun, nil, pargs} = pattern,
+         caps
+       )
+       when is_atom(pfun) and pfun != :_ and is_list(sargs) and is_list(pargs),
+       do: do_match({sfun, nil, sargs}, pattern, caps)
+
+  defp do_match(
+         {_shead, nil, sargs} = source,
+         {{:., nil, [{:__aliases__, nil, [:Kernel]}, pfun]}, nil, pargs},
+         caps
+       )
+       when is_atom(pfun) and is_list(sargs) and is_list(pargs),
+       do: do_match(source, {pfun, nil, pargs}, caps)
 
   # Module attribute: @name(expr) — attribute name is captureable
   defp do_match(
