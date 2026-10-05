@@ -15,8 +15,12 @@ defmodule Mix.Tasks.ExAst.Search do
       every pattern must declare `name`. Takes precedence over `--count` and
       `--count-by-file`; `--json` takes precedence over it
     * `--count-by-file` — print per-file match counts, most matches first
-    * `-A n`, `-B n`, `-C n` (`--after-context`, `--before-context`, `--context`) — print `n` lines after, before, or around each match, grouped under a file heading like ripgrep; cannot be combined with `--count`, `--count-by-file`, `--json` or `--print`
-    * `--color` / `--no-color` — force colored context output on or off; by default it is colored only when writing to a terminal
+    * `-A n`, `-B n`, `-C n` (`--after-context`, `--before-context`, `--context`) —
+      print `n` lines after, before, or around each match, grouped under a file
+      heading like ripgrep; cannot be combined with `--count`, `--count-by-file`,
+      `--json` or `--print`
+    * `--color` / `--no-color` — force colored context output on or off; by default
+      it is colored only when writing to a terminal
     * `--limit n` — stop after returning this many matches
     * `--allow-broad` — allow unbounded broad searches like `_`
     * `--expand-imports` — resolve bare `import Mod` (and `import Mod,
