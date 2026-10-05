@@ -51,7 +51,6 @@ defmodule ExAST.Rewriter do
         replacement_source =
           replacement_ast
           |> Pattern.substitute(ExAST.AST.strip_sourceror_meta(captures))
-          |> restore_meta()
           |> ExAST.AST.to_string()
 
         %Replacement{
@@ -119,13 +118,6 @@ defmodule ExAST.Rewriter do
 
   defp to_quoted(pattern) when is_binary(pattern), do: Code.string_to_quoted!(pattern)
   defp to_quoted(pattern), do: pattern
-
-  defp restore_meta(ast) do
-    Macro.prewalk(ast, fn
-      {form, nil, args} -> {form, [], args}
-      other -> other
-    end)
-  end
 end
 
 defimpl Jason.Encoder, for: ExAST.Rewriter.Replacement do

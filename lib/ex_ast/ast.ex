@@ -30,9 +30,14 @@ defmodule ExAST.AST do
     "\t" => "\\t"
   }
 
-  @doc "Renders AST like `Macro.to_string/1`, keeping interpolated strings' escapes."
+  @doc """
+  Renders AST like `Macro.to_string/1`. Accepts normalized nodes with `nil` meta and
+  keeps the escapes of interpolated strings.
+  """
   @spec to_string(Macro.t()) :: String.t()
   def to_string(ast), do: ast |> Macro.prewalk(&escape_interpolation/1) |> Macro.to_string()
+
+  defp escape_interpolation({form, nil, args}), do: escape_interpolation({form, [], args})
 
   # Sigil contents are raw source: mark them so the walk leaves them alone.
   defp escape_interpolation({name, meta, [{:<<>>, string_meta, parts}, modifiers]} = node)

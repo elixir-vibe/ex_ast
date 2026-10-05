@@ -299,9 +299,10 @@ defmodule ExAST.Pattern do
   end
 
   defp unescape_parts(parts, meta) do
-    if meta[:delimiter],
-      do: Enum.map(parts, &if(is_binary(&1), do: Macro.unescape_string(&1), else: &1)),
-      else: parts
+    Enum.map(parts, fn
+      part when is_binary(part) -> unescape_literal(part, meta)
+      part -> part
+    end)
   end
 
   # Sourceror encodes a genuine 2-tuple literal as `{:__block__, _, [{a, b}]}`
