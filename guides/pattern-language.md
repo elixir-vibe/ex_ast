@@ -197,6 +197,10 @@ Common patterns that solve real problems without needing queries or guards:
 # String literal
 "Logger.info(\"starting\")"
 
+# Strings match by value: also matches "done\x0A" or an equivalent heredoc.
+# Sigil contents (~r, ~S, ...) compare as written.
+~S|IO.puts("done\n")|
+
 # Any module attribute read at compile time
 "@_ Application.get_env(_, _)"
 
