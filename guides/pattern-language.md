@@ -7,6 +7,7 @@ Patterns are valid Elixir expressions given as strings or `quote` blocks.
 | Syntax | Meaning |
 |--------|---------|
 | `_` or `_name` | Wildcard — matches any node, not captured |
+| `__MODULE__`, `__ENV__`, `__DIR__`, `__CALLER__`, `__STACKTRACE__` | Literal — match only themselves, despite the leading underscore |
 | `name`, `expr`, `x` | Capture — matches any node, bound by name |
 | `...` | Ellipsis — matches a variable-length remainder in calls, lists, tuples, blocks, maps, and structs |
 | Everything else | Literal — must match exactly |

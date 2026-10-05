@@ -15,6 +15,9 @@ Search files for AST pattern matches. PATH can be a file, directory, or glob.
 | `-e`, `--pattern PATTERN` | Add a pattern to a multi-pattern batch (repeatable). See [Multiple patterns](#multiple-patterns) |
 | `--count` | Print match count only |
 | `--count-by-file` | Print per-file match counts, most matches first |
+| `--print NAME` | Print only the value captured by `NAME`, one per match, with no file or line prefix. Every pattern must declare `NAME` |
+| `-A N`, `-B N`, `-C N` | Print `N` lines after, before, or around each match, grouped under a file heading like ripgrep (`--after-context`, `--before-context`, `--context`) |
+| `--color` / `--no-color` | Force colored context output on or off. By default it is colored only when writing to a terminal |
 | `--limit N` | Stop after N matches |
 | `--allow-broad` | Allow patterns like `_` that match everything |
 | `--expand-imports` | Resolve `import Mod` to `Mod`'s real exports, scoped per module, so `map(a, b)` matches `Mod.map(_, _)`. Requires `Mod` to be loadable |
@@ -74,6 +77,28 @@ mix ex_ast.search 'IO.inspect(_)' lib/ --count-by-file
 
 # Resolve a bare `import Enum` to its real exports
 mix ex_ast.search 'Enum.map(_, _)' lib/ --expand-imports
+
+# Print every value a config key is set to, for piping into other tools
+mix ex_ast.search 'config :my_app, feature_enabled: x' config/ --print x
+
+# Show two lines of context around each match
+mix ex_ast.search 'Repo.transaction(_)' lib/ -C 2
+```
+
+### Output modes
+
+Only one output mode applies. `--json` wins over `--print`, and `--print` wins
+over `--count` and `--count-by-file`. The context flags (`-A`, `-B`, `-C`)
+cannot be combined with `--count`, `--count-by-file`, `--json` or `--print`.
+
+With context, match lines are numbered `12:`, context lines `11-`, and `--`
+separates groups that don't touch:
+
+```
+lib/app/worker.ex
+11-  def run(job) do
+12:    Repo.transaction(fn -> process(job) end)
+13-  end
 ```
 
 ## Multiple patterns
@@ -103,8 +128,9 @@ mix ex_ast.search \
   lib/ test/
 ```
 
-Global flags (`--count`, `--json`, `--expand-imports`, `--limit`,
-`--allow-broad`, paths) apply to the whole batch.
+Global flags (`--count`, `--json`, `--print`, `-A`/`-B`/`-C`,
+`--expand-imports`, `--limit`, `--allow-broad`, paths) apply to the whole
+batch. With `--print NAME`, every `-e` pattern must declare `NAME`.
 
 ### Output
 
