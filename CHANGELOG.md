@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.13.2 - 2026-10-05
+
+### Fixed
+
+- Dynamic import options such as `import Mod, unquote(opts)` no longer crash
+  pattern matching; they are treated like a bare import.
+
 ## 0.13.1 - 2026-07-23
 
 ### Compatibility

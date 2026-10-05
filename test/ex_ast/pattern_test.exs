@@ -715,6 +715,20 @@ defmodule ExAST.PatternTest do
       assert [] = ExAST.Patcher.find_all(source, "Ecto.Query.where(_, _, _)")
     end
 
+    test "dynamic import options are treated like a bare import" do
+      source = """
+      defmodule Demo do
+        import String, unquote(opts)
+
+        def run(value), do: upcase(value)
+      end
+      """
+
+      assert [] = ExAST.Patcher.find_all(source, "String.upcase(_)")
+      assert [_] = ExAST.Patcher.find_all(source, "upcase(_)")
+      assert [_] = ExAST.Patcher.find_all(source, "def run(_), do: _")
+    end
+
     test "a bare import does not break matching of unrelated calls" do
       source = """
       defmodule Demo do
