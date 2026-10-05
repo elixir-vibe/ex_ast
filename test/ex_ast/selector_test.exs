@@ -280,6 +280,26 @@ defmodule ExAST.SelectorTest do
                [:then, :else]
     end
 
+    test "has_child sees the do: body of a one-line call with options" do
+      source = """
+      for item <- items, into: Map.new(), do: IO.inspect(:into)
+      for item <- items, uniq: true, do: IO.inspect(:uniq)
+      """
+
+      selector =
+        pattern("for(...)")
+        |> child("IO.inspect(value)")
+
+      assert source |> Patcher.find_all(selector) |> Enum.map(& &1.captures[:value]) ==
+               [:into, :uniq]
+
+      with_option =
+        pattern("for(...)")
+        |> where(has_child("Map.new()"))
+
+      assert Patcher.find_all(source, with_option) == []
+    end
+
     test "ancestor filters by any semantic ancestor" do
       source = """
       def run do
