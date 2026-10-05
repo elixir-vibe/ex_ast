@@ -485,13 +485,15 @@ defmodule ExAST.Pattern do
     end
   end
 
-  defp opt_value(opts, key) do
+  defp opt_value(opts, key) when is_list(opts) do
     Enum.find_value(opts, fn
       {{:__block__, _, [^key]}, value} -> value
       {^key, value} -> value
       _other -> nil
     end)
   end
+
+  defp opt_value(_dynamic_opts, _key), do: nil
 
   defp parse_only_list(ast) do
     case unwrap_block(ast) do
