@@ -11,7 +11,9 @@ defmodule Mix.Tasks.ExAst.Search do
 
     * `-e`, `--pattern` — add a pattern to a multi-pattern batch (repeatable)
     * `--count` — only print the number of matches
-    * `--print name` — print only the value captured by `name`, one value per match; every pattern must declare `name`
+    * `--print name` — print only the value captured by `name`, one value per match;
+      every pattern must declare `name`. Takes precedence over `--count` and
+      `--count-by-file`; `--json` takes precedence over it
     * `--count-by-file` — print per-file match counts, most matches first
     * `--limit n` — stop after returning this many matches
     * `--allow-broad` — allow unbounded broad searches like `_`
