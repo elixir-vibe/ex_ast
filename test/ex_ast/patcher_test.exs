@@ -546,6 +546,28 @@ defmodule ExAST.PatcherTest do
       refute source =~ "IO.inspect"
     end
 
+    test "renders with Sourceror when captures are literals" do
+      source = ~S"""
+      IO.puts(:ok)
+      IO.puts(42)
+      IO.puts("dir\\file\n\"q\"")
+      IO.puts("hi \#{lit} #{name}\n")
+      """
+
+      result =
+        source
+        |> Sourceror.parse_string!()
+        |> Sourceror.Zipper.zip()
+        |> Patcher.replace_all("IO.puts(x)", "Logger.info(x, label: :out)")
+
+      assert Sourceror.to_string(result) <> "\n" == ~S"""
+             Logger.info(:ok, label: :out)
+             Logger.info(42, label: :out)
+             Logger.info("dir\\file\n\"q\"", label: :out)
+             Logger.info("hi \#{lit} #{name}\n", label: :out)
+             """
+    end
+
     test "preserves unmatched nodes" do
       ast =
         Sourceror.parse_string!("""
