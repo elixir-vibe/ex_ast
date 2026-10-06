@@ -927,7 +927,13 @@ defmodule ExAST.PatcherTest do
       """
 
       result = Patcher.replace_all(source, "Logger.debug(...)", "Logger.warning(...)")
-      assert result =~ "Logger.warning"
+
+      assert result == """
+             Logger.warning("a")
+             Logger.warning("b", extra: true)
+             Logger.info("keep")
+             """
+
       assert result =~ "Logger.info"
       refute result =~ "Logger.debug"
     end
@@ -959,6 +965,177 @@ defmodule ExAST.PatcherTest do
 
       matches = Patcher.find_all(source, "def run(...) do ... end")
       assert length(matches) == 2
+    end
+  end
+
+  describe "replace_all/3 with ... in the replacement" do
+    defp replace(source, pattern, replacement),
+      do: source |> Patcher.replace_all(pattern, replacement) |> String.trim_trailing()
+
+    test "splices the arguments a trailing ... matched" do
+      pattern = "Logger.debug(msg, ...)"
+      replacement = "Logger.warning(msg, ...)"
+
+      assert replace("Logger.debug(msg)", pattern, replacement) == "Logger.warning(msg)"
+
+      assert replace("Logger.debug(msg, meta)", pattern, replacement) ==
+               "Logger.warning(msg, meta)"
+
+      assert replace(~S|Logger.debug(msg, label: "a", limit: 5)|, pattern, replacement) ==
+               ~S|Logger.warning(msg, label: "a", limit: 5)|
+    end
+
+    test "moves leading and middle arguments" do
+      assert replace("foo(a, b, last)", "foo(..., last)", "bar(last, ...)") == "bar(last, a, b)"
+      assert replace("foo(a, b, c, d)", "foo(a, ..., d)", "bar(d, ..., a)") == "bar(d, b, c, a)"
+    end
+
+    test "merges a trailing keyword list with the replacement's options" do
+      replacement = "Logger.info(x, ..., limit: 5)"
+
+      assert replace(~S|IO.inspect(x, label: "a")|, "IO.inspect(x, ...)", replacement) ==
+               ~S|Logger.info(x, label: "a", limit: 5)|
+
+      assert replace("IO.inspect(x)", "IO.inspect(x, ...)", replacement) ==
+               "Logger.info(x, limit: 5)"
+
+      assert replace("IO.inspect(x, [1, 2])", "IO.inspect(x, ...)", replacement) ==
+               "Logger.info(x, [1, 2], limit: 5)"
+    end
+
+    test "reuses a single ... wherever the replacement has one" do
+      assert replace("f(a, b)", "f(...)", "g(...) && h(...)") == "g(a, b) && h(a, b)"
+    end
+
+    test "maps several ... in order" do
+      source = """
+      def run(a, b) do
+        x = a + b
+        x * 2
+      end
+      """
+
+      assert replace(source, "def run(...) do ... end", "defp run(...) do ... end") == """
+             defp run(a, b) do
+               x = a + b
+               x * 2
+             end\
+             """
+
+      assert replace("outer(inner(1, 2), 3)", "outer(inner(...), ...)", "swap(...)(...)") ==
+               "swap(1, 2)(3)"
+    end
+
+    test "raises when several ... don't line up with the replacement" do
+      assert_raise ArgumentError, ~r/replacement has 1 `...` but the pattern has 2/, fn ->
+        Patcher.replace_all("def run(a), do: a", "def run(...) do ... end", "defp run(...)")
+      end
+    end
+
+    test "drops what ... matched when the replacement has none" do
+      assert replace("def run(a), do: a", "def run(...) do ... end", "defp run") == "defp run"
+    end
+
+    test "keeps ... as written when the pattern has none" do
+      assert replace("spec(x)", "spec(x)", "@spec f(x) :: [...]") == "@spec f(x) :: [...]"
+    end
+
+    test "splices block bodies" do
+      source = """
+      def run do
+        a()
+        b()
+      end
+      """
+
+      replacement = """
+      def run do
+        log()
+        ...
+      end
+      """
+
+      assert replace(source, "def run do ... end", replacement) == """
+             def run do
+               log()
+               a()
+               b()
+             end\
+             """
+
+      assert replace("def run, do: log(a)", "def run, do: ...", replacement) ==
+               "def run do\n  log()\n  log(a)\nend"
+    end
+
+    test "splices list and tuple elements" do
+      assert replace("[1, 2, 3]", "[first, ...]", "[..., first]") == "[2, 3, 1]"
+      assert replace("{:ok, a, b}", "{:ok, ...}", "{:error, ...}") == "{:error, a, b}"
+      assert replace("{:ok}", "{:ok, ...}", "{:error, ...}") == "{:error}"
+    end
+
+    test "splices the remaining map and struct pairs" do
+      assert replace("%{a: 1, b: 2, c: 3}", "%{..., a: x}", "%{..., z: x}") ==
+               "%{b: 2, c: 3, z: 1}"
+
+      assert replace("%User{name: n, age: 3}", "%User{..., name: n}", "%Account{..., owner: n}") ==
+               "%Account{age: 3, owner: n}"
+    end
+
+    test "places a single matched node in a keyword value" do
+      assert replace("foo(opt: bar(1))", "foo(opt: bar(...))", "baz(opt: ...)") == "baz(opt: 1)"
+    end
+
+    test "raises when several matched nodes would replace a single node" do
+      assert_raise ArgumentError, ~r/matched 2 nodes can't replace a single node/, fn ->
+        Patcher.replace_all("foo(opt: bar(1, 2))", "foo(opt: bar(...))", "baz(opt: ...)")
+      end
+    end
+
+    test "keeps escapes in spliced strings" do
+      assert replace(
+               ~S|Logger.debug(msg, "a\nb\\c")|,
+               "Logger.debug(msg, ...)",
+               "Logger.warning(msg, ...)"
+             ) ==
+               ~S|Logger.warning(msg, "a\nb\\c")|
+    end
+
+    test "uses the last step of a selector and ignores predicates" do
+      import ExAST.Selector
+
+      source = "outer(1, 2, inner(3, 4))"
+      chain = pattern("outer(...)") |> descendant("inner(...)")
+      filtered = pattern("outer(...)") |> where(has_child("inner(...)"))
+
+      assert replace(source, chain, "replaced(...)") == "outer(1, 2, replaced(3, 4))"
+      assert replace(source, filtered, "wrapped(...)") == "wrapped(1, 2, inner(3, 4))"
+    end
+
+    test "works for multi-node patterns" do
+      assert replace("a = f(1, 2)\nb = g(a)\n", "a = f(...)\nb = g(a)", "b = g(f(...))") ==
+               "b = g(f(1, 2))"
+    end
+
+    test "returns Sourceror AST for zipper input" do
+      result =
+        ~S|Logger.debug(msg, label: "a\n")|
+        |> Sourceror.parse_string!()
+        |> Sourceror.Zipper.zip()
+        |> Patcher.replace_all("Logger.debug(msg, ...)", "Logger.warning(msg, ...)")
+
+      assert Sourceror.to_string(result) == ~S|Logger.warning(msg, label: "a\n")|
+    end
+
+    test "find_all and find_many captures don't expose what ... matched" do
+      source = "Logger.debug(msg, meta)"
+
+      assert [%{captures: %{msg: _} = captures}] =
+               Patcher.find_all(source, "Logger.debug(msg, ...)")
+
+      refute Map.has_key?(captures, :...)
+
+      assert [%{captures: captures}] = Patcher.find_many(source, a: "Logger.debug(msg, ...)")
+      refute Map.has_key?(captures, :...)
     end
   end
 end

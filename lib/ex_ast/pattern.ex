@@ -64,7 +64,9 @@ defmodule ExAST.Pattern do
   Matches an AST node against a pattern.
 
   The pattern can be a string or a quoted expression.
-  Returns `{:ok, captures}` on match, `:error` otherwise.
+  Returns `{:ok, captures}` on match, `:error` otherwise. When the pattern has
+  `...`, captures also hold what it matched under the `:...` key, which
+  `substitute/2` uses.
 
   Alias directives found in the surrounding AST can be expanded before matching,
   so `alias AshPhoenix.Form` followed by `Form.for_update(...)` matches
@@ -233,10 +235,44 @@ defmodule ExAST.Pattern do
 
   Variables in the template that match capture names are replaced
   with the captured AST nodes.
+
+  A `...` in the template is replaced with what a `...` in the pattern matched,
+  recorded under the `:...` capture key: the matched arguments, list elements or
+  map pairs are spliced in. When the pattern has one `...`, every `...` in the
+  template refers to it; with several, the template must use the same number,
+  in the same order. A `...` is kept as written when the pattern had none.
   """
   @spec substitute(Macro.t(), captures()) :: Macro.t()
   def substitute(template_ast, captures) do
-    do_substitute(template_ast, captures)
+    {rests, captures} = Map.pop(captures, :..., [])
+    {template_ast, count} = number_ellipses(template_ast, rests)
+    rests = rests |> rests_for(count) |> List.to_tuple()
+
+    do_substitute(template_ast, Map.put(captures, :..., rests))
+  end
+
+  defp rests_for(_rests, 0), do: []
+  defp rests_for([rest], count), do: List.duplicate(rest, count)
+  defp rests_for(rests, count) when length(rests) == count, do: rests
+
+  defp rests_for(rests, count),
+    do: raise(ArgumentError, ellipsis_count_message(count, length(rests)))
+
+  defp number_ellipses(template_ast, []), do: {template_ast, 0}
+
+  defp number_ellipses(template_ast, _rests) do
+    Macro.prewalk(template_ast, 0, fn
+      {:..., _meta, args}, index when is_list(args) ->
+        {{:__ex_ast_ellipsis__, [], [index]}, index + 1}
+
+      node, index ->
+        {node, index}
+    end)
+  end
+
+  defp ellipsis_count_message(template_count, pattern_count) do
+    "the replacement has #{template_count} `...` but the pattern has #{pattern_count}; " <>
+      "with more than one `...` in the pattern, use the same number in the replacement"
   end
 
   # --- Pattern coercion ---
@@ -810,7 +846,7 @@ defmodule ExAST.Pattern do
   defp do_match(_node, {:_, nil, nil}, caps), do: {:ok, caps}
 
   # Ellipsis as single-node wildcard (matches any node in non-list position)
-  defp do_match(_node, {:..., nil, _}, caps), do: {:ok, caps}
+  defp do_match(node, {:..., nil, _}, caps), do: {:ok, put_rest(caps, node)}
 
   @special_forms [:__MODULE__, :__ENV__, :__DIR__, :__CALLER__, :__STACKTRACE__]
 
@@ -995,6 +1031,13 @@ defmodule ExAST.Pattern do
   defp ellipsis?({:..., _, _}), do: true
   defp ellipsis?(_), do: false
 
+  # What each `...` matched is recorded under the `:...` capture key, in pattern
+  # order, so a replacement can splice it back. A run of list elements or
+  # map pairs is wrapped in `rest_run/1`; a single-node `...` records the node.
+  defp put_rest(caps, entry), do: Map.update(caps, :..., [entry], &(&1 ++ [entry]))
+
+  defp rest_run(nodes), do: {:__ex_ast_rest__, [], nodes}
+
   defp match_list_with_ellipsis(source, pattern, caps) do
     {before_ellipsis, after_ellipsis} = split_on_ellipsis(pattern)
     before_count = length(before_ellipsis)
@@ -1003,15 +1046,12 @@ defmodule ExAST.Pattern do
     if length(source) < before_count + after_count do
       :error
     else
-      source_before = Enum.take(source, before_count)
-      source_after = Enum.take(source, -after_count)
-      match_before_and_after(source_before, before_ellipsis, source_after, after_ellipsis, caps)
-    end
-  end
+      {source_before, rest} = Enum.split(source, before_count)
+      {middle, source_after} = Enum.split(rest, length(rest) - after_count)
 
-  defp match_before_and_after(source_before, before, source_after, after_, caps) do
-    with {:ok, caps} <- match_list_exact(source_before, before, caps) do
-      match_list_exact(source_after, after_, caps)
+      with {:ok, caps} <- match_list_exact(source_before, before_ellipsis, caps) do
+        match_list_exact(source_after, after_ellipsis, put_rest(caps, rest_run(middle)))
+      end
     end
   end
 
@@ -1152,12 +1192,23 @@ defmodule ExAST.Pattern do
   # --- Subset matching for structs/maps ---
 
   defp match_subset(source_kvs, pattern_kvs, caps) do
-    pattern_kvs
-    |> Enum.reject(&ellipsis?/1)
-    |> Enum.reduce_while({:ok, caps}, fn {pkey, pval}, {:ok, caps} ->
-      source_kvs
-      |> find_value_by_key(pkey)
-      |> match_kv_value(pval, caps)
+    Enum.reduce_while(pattern_kvs, {:ok, caps}, fn
+      {:..., _, _}, {:ok, caps} ->
+        {:cont, {:ok, put_rest(caps, rest_run(unmatched_kvs(source_kvs, pattern_kvs)))}}
+
+      {pkey, pval}, {:ok, caps} ->
+        source_kvs
+        |> find_value_by_key(pkey)
+        |> match_kv_value(pval, caps)
+    end)
+  end
+
+  defp unmatched_kvs(source_kvs, pattern_kvs) do
+    pattern_keys = for {key, _value} <- pattern_kvs, do: key
+
+    Enum.reject(source_kvs, fn
+      {key, _value} -> Enum.any?(pattern_keys, &Ident.equal?(key, &1))
+      _other -> false
     end)
   end
 
@@ -1179,6 +1230,24 @@ defmodule ExAST.Pattern do
 
   # --- Substitution ---
 
+  defp do_substitute({:__ex_ast_ellipsis__, _meta, [index]}, captures),
+    do: captures |> rest_at(index) |> single_rest(false)
+
+  defp do_substitute({:__block__, meta, statements}, captures) when is_list(statements) do
+    statements =
+      statements
+      |> substitute_list(captures)
+      |> Enum.flat_map(fn
+        {:__block__, _, inner} when is_list(inner) -> inner
+        statement -> [statement]
+      end)
+
+    {:__block__, meta, statements}
+  end
+
+  defp do_substitute({:%{}, meta, pairs}, captures) when is_list(pairs),
+    do: {:%{}, meta, substitute_pairs(pairs, captures)}
+
   defp do_substitute({name, meta, context}, captures) when is_atom(name) and is_atom(context) do
     s = Atom.to_string(name)
 
@@ -1190,20 +1259,80 @@ defmodule ExAST.Pattern do
   end
 
   defp do_substitute({form, meta, args}, captures) when is_atom(form) do
-    {form, meta, do_substitute(args, captures)}
+    {form, meta, substitute_args(args, captures)}
   end
 
   defp do_substitute({form, meta, args}, captures) do
-    {do_substitute(form, captures), meta, do_substitute(args, captures)}
+    {do_substitute(form, captures), meta, substitute_args(args, captures)}
   end
 
+  # A 2-tuple outside a list is a tuple: `{:error, ...}` splices into `{:error, a, b}`.
   defp do_substitute({left, right}, captures) do
-    {do_substitute(left, captures), do_substitute(right, captures)}
+    if ellipsis_placeholder?(left) or ellipsis_placeholder?(right),
+      do: {:{}, [], substitute_list([left, right], captures)},
+      else: {do_substitute(left, captures), do_substitute(right, captures)}
   end
 
-  defp do_substitute(list, captures) when is_list(list) do
-    Enum.map(list, &do_substitute(&1, captures))
-  end
+  defp do_substitute(list, captures) when is_list(list), do: substitute_pairs(list, captures)
 
   defp do_substitute(other, _captures), do: other
+
+  defp substitute_list(list, captures) do
+    Enum.flat_map(list, fn
+      {:__ex_ast_ellipsis__, _meta, [index]} -> captures |> rest_at(index) |> spliced_rest()
+      element -> [do_substitute(element, captures)]
+    end)
+  end
+
+  # In a list literal or map, a 2-tuple is a key-value pair, so in `key: ...` the
+  # `...` is a single value.
+  defp substitute_pairs(list, captures) do
+    Enum.flat_map(list, fn
+      {key, {:__ex_ast_ellipsis__, _meta, [index]}} ->
+        body? = key in [:do, :else, :after, :rescue, :catch]
+        [{do_substitute(key, captures), captures |> rest_at(index) |> single_rest(body?)}]
+
+      element ->
+        substitute_list([element], captures)
+    end)
+  end
+
+  defp ellipsis_placeholder?({:__ex_ast_ellipsis__, _meta, [_index]}), do: true
+  defp ellipsis_placeholder?(_node), do: false
+
+  # `Logger.info(x, ..., limit: 5)` with `...` ending in `label: "a"` gives
+  # `Logger.info(x, label: "a", limit: 5)`, not two keyword-list arguments.
+  defp substitute_args(args, captures) when is_list(args) do
+    substituted = substitute_list(args, captures)
+
+    with [{:__ex_ast_ellipsis__, _, _}, last] <- Enum.take(args, -2),
+         true <- keyword?(last),
+         [rest_last, template_last] <- Enum.take(substituted, -2),
+         true <- keyword?(rest_last) do
+      Enum.drop(substituted, -2) ++ [rest_last ++ template_last]
+    else
+      _ -> substituted
+    end
+  end
+
+  defp substitute_args(args, captures), do: do_substitute(args, captures)
+
+  defp rest_at(captures, index), do: captures |> Map.fetch!(:...) |> elem(index)
+
+  defp spliced_rest({:__ex_ast_rest__, _meta, nodes}), do: nodes
+  defp spliced_rest(node), do: [node]
+
+  defp single_rest({:__ex_ast_rest__, _meta, [node]}, _body?), do: node
+  defp single_rest({:__ex_ast_rest__, _meta, nodes}, true), do: {:__block__, [], nodes}
+
+  defp single_rest({:__ex_ast_rest__, _meta, nodes}, false) do
+    raise ArgumentError,
+          "a `...` that matched #{length(nodes)} nodes can't replace a single node; " <>
+            "put it in a list, call arguments, a tuple, a map or a do-block"
+  end
+
+  defp single_rest(node, _body?), do: node
+
+  defp keyword?([_ | _] = list), do: Enum.all?(list, &match?({key, _} when is_atom(key), &1))
+  defp keyword?(_other), do: false
 end

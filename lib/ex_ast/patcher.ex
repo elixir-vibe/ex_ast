@@ -68,31 +68,39 @@ defmodule ExAST.Patcher do
           [
             match()
           ]
-  def find_all(input, pattern, opts \\ [])
+  def find_all(input, pattern, opts \\ []) do
+    input |> find_all_with_rests(pattern, opts) |> Enum.map(&drop_rests/1)
+  end
 
-  def find_all(source, %Selector{} = selector, opts) when is_binary(source) do
+  # Like `find_all/3`, but captures keep what each `...` matched under `:...`,
+  # which `Pattern.substitute/2` needs.
+  @doc false
+  def find_all_with_rests(source, %Selector{} = selector, opts) when is_binary(source) do
     source
     |> Sourceror.parse_string!()
     |> do_find_all(selector, opts, source_comments(source), source_lines(source))
   end
 
-  def find_all(source, pattern, opts) when is_binary(source) do
+  def find_all_with_rests(source, pattern, opts) when is_binary(source) do
     source
     |> Sourceror.parse_string!()
     |> do_find_all(pattern, opts, nil, source_lines(source))
   end
 
-  def find_all(%Zipper{} = zipper, %Selector{} = selector, opts) do
+  def find_all_with_rests(%Zipper{} = zipper, %Selector{} = selector, opts) do
     zipper |> Zipper.topmost_root() |> do_find_all(selector, opts, nil, nil)
   end
 
-  def find_all(%Zipper{} = zipper, pattern, opts) do
+  def find_all_with_rests(%Zipper{} = zipper, pattern, opts) do
     zipper |> Zipper.topmost_root() |> do_find_all(pattern, opts, nil, nil)
   end
 
-  def find_all(ast, pattern, opts) do
+  def find_all_with_rests(ast, pattern, opts) do
     do_find_all(ast, pattern, opts, nil, nil)
   end
+
+  defp drop_rests(%{captures: captures} = match),
+    do: %{match | captures: Map.delete(captures, :...)}
 
   @doc """
   Finds matches for multiple named patterns in a single pass where possible.
@@ -115,9 +123,11 @@ defmodule ExAST.Patcher do
           [named_pattern()] | %{pattern_name() => Pattern.pattern() | Selector.t()},
           keyword()
         ) :: [tagged_match()]
-  def find_many(input, patterns, opts \\ [])
+  def find_many(input, patterns, opts \\ []) do
+    input |> do_find_many_input(patterns, opts) |> Enum.map(&drop_rests/1)
+  end
 
-  def find_many(source, patterns, opts) when is_binary(source) do
+  defp do_find_many_input(source, patterns, opts) when is_binary(source) do
     source
     |> Sourceror.parse_string!()
     |> do_find_many(
@@ -128,11 +138,11 @@ defmodule ExAST.Patcher do
     )
   end
 
-  def find_many(%Zipper{} = zipper, patterns, opts) do
+  defp do_find_many_input(%Zipper{} = zipper, patterns, opts) do
     zipper |> Zipper.topmost_root() |> do_find_many(named_patterns!(patterns), opts, nil, nil)
   end
 
-  def find_many(ast, patterns, opts) do
+  defp do_find_many_input(ast, patterns, opts) do
     do_find_many(ast, named_patterns!(patterns), opts, nil, nil)
   end
 
@@ -177,7 +187,7 @@ defmodule ExAST.Patcher do
 
   def replace_all(source, pattern, replacement, opts) when is_binary(source) do
     replacement_ast = to_quoted(replacement)
-    matches = find_all(source, pattern, opts)
+    matches = find_all_with_rests(source, pattern, opts)
 
     patches =
       Enum.map(matches, fn %{range: range, captures: captures} ->
@@ -959,7 +969,10 @@ defmodule ExAST.Patcher do
     end
   end
 
+  # The replaced node is the last step's, so its `...` matches replace earlier ones.
   defp merge_captures(left, right) do
+    left = if Map.has_key?(right, :...), do: Map.delete(left, :...), else: left
+
     Enum.reduce_while(right, {:ok, left}, fn {key, value}, {:ok, acc} ->
       case Map.fetch(acc, key) do
         {:ok, ^value} -> {:cont, {:ok, acc}}
