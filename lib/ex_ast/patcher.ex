@@ -63,6 +63,7 @@ defmodule ExAST.Patcher do
       and `only: :functions` / `:macros`) to `Mod`'s real exports, scoped to the
       enclosing module, so `map(a, b)` matches `Mod.map(_, _)`. Defaults to
       `false`; requires `Mod` to be loadable.
+    * `:limit` — return at most this many matches, in source order
   """
   @spec find_all(String.t() | Zipper.t() | Macro.t(), Pattern.pattern() | Selector.t(), keyword()) ::
           [
@@ -75,28 +76,39 @@ defmodule ExAST.Patcher do
   # Like `find_all/3`, but captures keep what each `...` matched under `:...`,
   # which `Pattern.substitute/2` needs.
   @doc false
-  def find_all_with_rests(source, %Selector{} = selector, opts) when is_binary(source) do
+  def find_all_with_rests(input, pattern, opts) do
+    input |> do_find_all_input(pattern, opts) |> take_limit(opts)
+  end
+
+  defp do_find_all_input(source, %Selector{} = selector, opts) when is_binary(source) do
     source
     |> Sourceror.parse_string!()
     |> do_find_all(selector, opts, source_comments(source), source_lines(source))
   end
 
-  def find_all_with_rests(source, pattern, opts) when is_binary(source) do
+  defp do_find_all_input(source, pattern, opts) when is_binary(source) do
     source
     |> Sourceror.parse_string!()
     |> do_find_all(pattern, opts, nil, source_lines(source))
   end
 
-  def find_all_with_rests(%Zipper{} = zipper, %Selector{} = selector, opts) do
+  defp do_find_all_input(%Zipper{} = zipper, %Selector{} = selector, opts) do
     zipper |> Zipper.topmost_root() |> do_find_all(selector, opts, nil, nil)
   end
 
-  def find_all_with_rests(%Zipper{} = zipper, pattern, opts) do
+  defp do_find_all_input(%Zipper{} = zipper, pattern, opts) do
     zipper |> Zipper.topmost_root() |> do_find_all(pattern, opts, nil, nil)
   end
 
-  def find_all_with_rests(ast, pattern, opts) do
+  defp do_find_all_input(ast, pattern, opts) do
     do_find_all(ast, pattern, opts, nil, nil)
+  end
+
+  defp take_limit(matches, opts) do
+    case Keyword.get(opts, :limit) do
+      nil -> matches
+      limit when is_integer(limit) and limit >= 0 -> Enum.take(matches, limit)
+    end
   end
 
   defp drop_rests(%{captures: captures} = match),
@@ -172,7 +184,8 @@ defmodule ExAST.Patcher do
 
   Pattern and replacement can be strings or quoted expressions.
   Captures from the pattern are substituted into the replacement template.
-  Accepts the same `:inside` / `:not_inside` options as `find_all/3`.
+  Accepts the same options as `find_all/3`; `limit: 1` replaces only the first
+  match.
   """
   @spec replace_all(String.t(), Pattern.pattern() | Selector.t(), Pattern.pattern(), keyword()) ::
           String.t()
@@ -281,6 +294,7 @@ defmodule ExAST.Patcher do
     matched_captures =
       ast
       |> do_find_all(pattern, opts, nil, nil)
+      |> take_limit(opts)
       |> Map.new(&{&1.node, &1.captures})
 
     Macro.prewalk(ast, fn node ->
