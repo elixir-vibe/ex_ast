@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- `Kernel.f(args)` and `f(args)` match each other in both directions, including
+  operators like `Kernel.+(a, b)`; replacements keep the call as written (#20).
 - String literals, heredocs, interpolated strings and quoted atoms match by value,
   so escape sequences like `\n` in a pattern match the same string in source;
   sigil contents still compare as written (#19). Replacements keep the escapes
