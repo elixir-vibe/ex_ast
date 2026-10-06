@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.1 - 2026-10-06
+
 ### Fixed
 
 - `Patcher.replace_all/4` with a zipper or Sourceror AST returns replacements as
