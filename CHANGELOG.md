@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0 - 2026-10-06
+
 ### Added
 
 - `mix ex_ast.search --print name` prints only the value captured by `name`,
@@ -23,7 +25,7 @@
 - Child selectors no longer drop positional arguments of calls ending in a
   keyword list, and select every block keyword body (#15).
 - Child selectors now see the `do:` body of one-line calls that also take
-  options, such as `for x <- xs, into: %{}, do: body`.
+  options, such as `for x <- xs, into: %{}, do: body` (#22).
 
 ## 0.13.2 - 2026-10-05
 
