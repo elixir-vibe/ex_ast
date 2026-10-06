@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.15.0 - 2026-10-06
+
 ### Added
 
 - A `...` in a replacement puts back what the pattern's `...` matched: call
