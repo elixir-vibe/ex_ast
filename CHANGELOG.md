@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.16.0 - 2026-10-06
+
 ### Added
 
 - `Patcher.find_all/3` and `Patcher.replace_all/4` accept `:limit`; `limit: 1`
