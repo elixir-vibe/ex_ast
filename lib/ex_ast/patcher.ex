@@ -157,7 +157,8 @@ defmodule ExAST.Patcher do
   Replaces all occurrences of `pattern` with `replacement`.
 
   When given a source string, returns a modified source string with
-  formatting preserved. When given a zipper or AST, returns modified AST.
+  formatting preserved. When given a zipper or Sourceror AST, returns modified
+  Sourceror AST that renders with `Sourceror.to_string/1`.
 
   Pattern and replacement can be strings or quoted expressions.
   Captures from the pattern are substituted into the replacement template.
@@ -279,11 +280,14 @@ defmodule ExAST.Patcher do
 
   defp maybe_replace_node(node, matched_captures, replacement_ast) do
     case Map.fetch(matched_captures, node) do
+      # Captures hold normalized values (bare literals, resolved escapes), so render
+      # the replacement and parse it back into Sourceror AST.
       {:ok, captures} ->
         captures
         |> ExAST.AST.strip_sourceror_meta()
         |> then(&Pattern.substitute(replacement_ast, &1))
-        |> restore_meta()
+        |> ExAST.AST.to_string()
+        |> Sourceror.parse_string!()
 
       :error ->
         node
@@ -1176,13 +1180,6 @@ defmodule ExAST.Patcher do
 
   defp to_quoted(pattern) when is_binary(pattern), do: Code.string_to_quoted!(pattern)
   defp to_quoted(pattern), do: pattern
-
-  defp restore_meta(ast) do
-    Macro.prewalk(ast, fn
-      {form, nil, args} -> {form, [], args}
-      other -> other
-    end)
-  end
 
   defp safe_range(node) do
     Sourceror.get_range(node)

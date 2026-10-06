@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- `Patcher.replace_all/4` with a zipper or Sourceror AST returns replacements as
+  Sourceror AST, so `Sourceror.to_string/1` renders them. Captured literals no
+  longer crash the formatter, and strings keep their escapes, which 0.14.0 broke
+  for interpolated strings.
+
 ## 0.14.0 - 2026-10-06
 
 ### Added
