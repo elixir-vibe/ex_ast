@@ -1138,4 +1138,28 @@ defmodule ExAST.PatcherTest do
       refute Map.has_key?(captures, :...)
     end
   end
+
+  describe ":limit" do
+    test "find_all returns the first matches in source order" do
+      source = "a(1)\na(2)\na(3)\n"
+
+      assert source |> Patcher.find_all("a(x)", limit: 2) |> Enum.map(& &1.captures.x) == [1, 2]
+      assert Patcher.find_all(source, "a(x)", limit: 0) == []
+    end
+
+    test "replace_all with limit: 1 replaces only the first match" do
+      assert Patcher.replace_all("a(1)\na(2)\n", "a(x)", "b(x)", limit: 1) == "b(1)\na(2)\n"
+      assert Patcher.replace_all("a(a(1))\n", "a(x)", "b(x)", limit: 1) == "b(a(1))\n"
+    end
+
+    test "replace_all with limit: 1 on a zipper" do
+      result =
+        "a(1)\na(2)"
+        |> Sourceror.parse_string!()
+        |> Sourceror.Zipper.zip()
+        |> Patcher.replace_all("a(x)", "b(x)", limit: 1)
+
+      assert Sourceror.to_string(result) == "b(1)\na(2)"
+    end
+  end
 end
