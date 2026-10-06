@@ -183,6 +183,9 @@ mix ex_ast.replace 'dbg(expr)' 'expr' lib/
 # Migrate API
 mix ex_ast.replace 'Repo.get!(mod, id)' 'Repo.get!(mod, id) || raise NotFoundError' lib/
 
+# Keep the remaining arguments with `...`
+mix ex_ast.replace 'Logger.debug(msg, ...)' 'Logger.warning(msg, ...)' lib/
+
 # Preview without writing
 mix ex_ast.replace --dry-run 'use Mix.Config' 'import Config' lib/
 

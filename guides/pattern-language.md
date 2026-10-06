@@ -101,6 +101,30 @@ It can also make the remainder explicit in map and struct patterns:
 "%User{...}"
 ```
 
+### In replacements
+
+A `...` in a replacement puts back what the pattern's `...` matched: the
+arguments, list or tuple elements, map pairs, or body statements.
+
+```elixir
+ExAST.Patcher.replace_all(source, "Logger.debug(msg, ...)", "Logger.warning(msg, ...)")
+# Logger.debug("hi", label: "x")  →  Logger.warning("hi", label: "x")
+
+ExAST.Patcher.replace_all(source, "foo(..., last)", "bar(last, ...)")
+# foo(a, b, c)  →  bar(c, a, b)
+
+ExAST.Patcher.replace_all(source, "def run(...) do ... end", "defp run(...) do ... end")
+```
+
+- With one `...` in the pattern, every `...` in the replacement refers to it.
+  With several, the replacement must use the same number, mapped in order.
+- When the pattern has no `...`, a `...` in the replacement is kept as written,
+  so typespecs like `[...]` still work.
+- Keyword options merge: `Logger.info(x, ..., limit: 5)` turns a matched
+  `label: "a"` into `Logger.info(x, label: "a", limit: 5)`.
+- Where a single node is expected, such as `opt: ...`, the `...` must have
+  matched exactly one node; a `do` body takes any number of statements.
+
 ## Structs and maps
 
 Partial matching — only specified keys must be present:

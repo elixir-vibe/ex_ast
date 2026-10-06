@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- A `...` in a replacement puts back what the pattern's `...` matched: call
+  arguments, list and tuple elements, map and struct pairs, or body statements.
+  `Logger.debug(msg, ...)` → `Logger.warning(msg, ...)` keeps every argument.
+
 ## 0.14.1 - 2026-10-06
 
 ### Fixed

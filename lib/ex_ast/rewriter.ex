@@ -46,7 +46,7 @@ defmodule ExAST.Rewriter do
 
     replacements =
       source
-      |> ExAST.Patcher.find_all(pattern, opts)
+      |> ExAST.Patcher.find_all_with_rests(pattern, opts)
       |> Enum.map(fn %{range: range, source: original, captures: captures} ->
         replacement_source =
           replacement_ast
@@ -57,7 +57,7 @@ defmodule ExAST.Rewriter do
           range: range,
           original: original,
           replacement: replacement_source,
-          captures: captures
+          captures: Map.delete(captures, :...)
         }
       end)
 

@@ -1038,6 +1038,15 @@ defmodule ExAST.PatternTest do
   end
 
   describe "substitute/2" do
+    test "splices what ... matched, from Pattern.match captures" do
+      source = Sourceror.parse_string!(~S|Logger.debug(msg, label: "a")|)
+      {:ok, captures} = Pattern.match(source, "Logger.debug(msg, ...)")
+      template = Code.string_to_quoted!("Logger.warning(msg, ...)")
+
+      assert template |> Pattern.substitute(captures) |> Macro.to_string() ==
+               ~S|Logger.warning(msg, label: "a")|
+    end
+
     test "replaces capture variables in template" do
       captures = %{expr: {:data, nil, nil}}
       template = Code.string_to_quoted!("Logger.debug(inspect(expr))")
