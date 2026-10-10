@@ -297,30 +297,30 @@ defmodule ExAST do
   end
 
   defp replace_file(file, pattern, replacement, dry_run, format?, where_opts) do
-    source = File.read!(file)
-
-    if ExAST.Prefilter.may_match?(source, pattern) do
-      source
-      |> Rewriter.plan(pattern, replacement, where_opts)
-      |> apply_rewrite_plan(file, source, dry_run, format?)
-    else
-      []
+    file
+    |> ExAST.Source.update(
+      &rewrite_source(&1, pattern, replacement, dry_run, format?, where_opts)
+    )
+    |> case do
+      0 -> []
+      count -> [{file, count}]
     end
   end
 
-  defp apply_rewrite_plan(%Rewriter.Plan{replacements: []}, _file, _source, _dry_run, _format?),
-    do: []
+  defp rewrite_source(source, pattern, replacement, dry_run, format?, where_opts) do
+    if ExAST.Prefilter.may_match?(source, pattern) do
+      plan = Rewriter.plan(source, pattern, replacement, where_opts)
+      count = length(plan.replacements)
 
-  defp apply_rewrite_plan(
-         %Rewriter.Plan{replacements: replacements} = plan,
-         file,
-         source,
-         dry_run,
-         format?
-       ) do
-    result = source |> Rewriter.apply(plan, on_conflict: :raise) |> maybe_format(format?)
-    unless dry_run, do: File.write!(file, result)
-    [{file, length(replacements)}]
+      rewritten =
+        if count > 0 and not dry_run,
+          do: source |> Rewriter.apply(plan, on_conflict: :raise) |> maybe_format(format?),
+          else: source
+
+      {rewritten, count}
+    else
+      {source, 0}
+    end
   end
 
   defp maybe_format(source, false), do: source
