@@ -140,6 +140,34 @@ defmodule ExASTTest do
     end
 
     @tag :tmp_dir
+    test "concurrent replacements of one file all land", %{tmp_dir: dir} do
+      path = Path.join(dir, "a.ex")
+
+      definitions =
+        1..12
+        |> Enum.map_join("\n", fn i -> "def f#{i}, do: original_#{i}()" end)
+
+      File.write!(path, "defmodule Example do\n" <> definitions <> "\nend\n")
+
+      1..12
+      |> Task.async_stream(
+        fn i ->
+          ExAST.replace(path, "def f#{i}, do: original_#{i}()", "def f#{i}, do: replaced_#{i}()")
+        end,
+        max_concurrency: 12,
+        timeout: 60_000
+      )
+      |> Enum.each(fn {:ok, replacements} -> assert replacements == [{path, 1}] end)
+
+      content = File.read!(path)
+
+      for i <- 1..12 do
+        assert content =~ "replaced_#{i}()"
+        refute content =~ "original_#{i}()"
+      end
+    end
+
+    @tag :tmp_dir
     test "can format modified files", %{tmp_dir: dir} do
       path = Path.join(dir, "a.ex")
       File.write!(path, "def run do\n  dbg(  user  )\nend\n")
