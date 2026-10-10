@@ -297,6 +297,38 @@ defmodule ExAST.PatcherTest do
 
       assert result =~ "build_step(@my_fields)"
     end
+
+    test "keeps an attribute that appears in the pattern and the replacement" do
+      source = """
+      defmodule Example do
+        def cleanup do
+          Process.delete(@fragment_epoch)
+        end
+      end
+      """
+
+      result =
+        Patcher.replace_all(
+          source,
+          "Process.delete(@fragment_epoch)",
+          "Process.delete(@fragment_epoch)"
+        )
+
+      assert result =~ "Process.delete(@fragment_epoch)"
+      refute result =~ "@:"
+    end
+
+    test "substitutes a captured attribute name" do
+      source = """
+      @env Application.get_env(:app, :key)
+      """
+
+      assert Patcher.replace_all(
+               source,
+               "@name Application.get_env(:app, :key)",
+               "@name Application.get_env(:app, :other_key)"
+             ) =~ "@env Application.get_env(:app, :other_key)"
+    end
   end
 
   describe "where conditions" do

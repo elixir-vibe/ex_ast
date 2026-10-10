@@ -1017,6 +1017,37 @@ defmodule ExAST.PatternTest do
       assert length(matches) == 2
       assert Enum.map(matches, & &1.captures[:name]) == [:env, :db_url]
     end
+
+    test "substitutes a captured attribute name" do
+      template = Code.string_to_quoted!("Process.delete(@name)")
+
+      assert template |> Pattern.substitute(%{name: :fragment_epoch}) |> Macro.to_string() ==
+               "Process.delete(@fragment_epoch)"
+    end
+
+    test "substitutes a captured attribute name with arguments" do
+      template = Code.string_to_quoted!("@name Application.get_env(:app, :key)")
+
+      assert template |> Pattern.substitute(%{name: :env}) |> Macro.to_string() ==
+               "@env Application.get_env(:app, :key)"
+    end
+
+    test "keeps an attribute name that was not captured" do
+      template = Code.string_to_quoted!("Process.delete(@fragment_epoch)")
+
+      assert template |> Pattern.substitute(%{expr: :value}) |> Macro.to_string() ==
+               "Process.delete(@fragment_epoch)"
+
+      assert template |> Pattern.substitute(%{_name: :value}) |> Macro.to_string() ==
+               "Process.delete(@fragment_epoch)"
+    end
+
+    test "keeps a wildcard-prefixed attribute name" do
+      template = Code.string_to_quoted!("Process.delete(@_name)")
+
+      assert template |> Pattern.substitute(%{_name: :other}) |> Macro.to_string() ==
+               "Process.delete(@_name)"
+    end
   end
 
   describe "control flow" do
