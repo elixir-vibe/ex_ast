@@ -1249,12 +1249,27 @@ defmodule ExAST.Pattern do
     do: {:%{}, meta, substitute_pairs(pairs, captures)}
 
   defp do_substitute({name, meta, context}, captures) when is_atom(name) and is_atom(context) do
-    s = Atom.to_string(name)
-
-    if not String.starts_with?(s, "_") and Map.has_key?(captures, name) do
+    if capture_name?(name, captures) do
       Map.fetch!(captures, name)
     else
       {name, meta, context}
+    end
+  end
+
+  # An attribute slot holds a name, so a captured name becomes that attribute: the name node
+  # keeps its place and the attribute's arguments are substituted like any call. Substituting
+  # the name itself would leave the atom literal, which renders as `@:env`, or leave the
+  # template's own `@name` in place when the attribute has arguments.
+  defp do_substitute({:@, meta, [{name, name_meta, args}]}, captures) when is_atom(name) do
+    args = substitute_args(args, captures)
+
+    if capture_name?(name, captures) do
+      case Map.fetch!(captures, name) do
+        value when is_atom(value) -> {:@, meta, [{value, name_meta, args}]}
+        value -> {:@, meta, [value]}
+      end
+    else
+      {:@, meta, [{name, name_meta, args}]}
     end
   end
 
@@ -1276,6 +1291,9 @@ defmodule ExAST.Pattern do
   defp do_substitute(list, captures) when is_list(list), do: substitute_pairs(list, captures)
 
   defp do_substitute(other, _captures), do: other
+
+  defp capture_name?(name, captures),
+    do: not String.starts_with?(Atom.to_string(name), "_") and Map.has_key?(captures, name)
 
   defp substitute_list(list, captures) do
     Enum.flat_map(list, fn
