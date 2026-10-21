@@ -32,15 +32,15 @@ ExAST.Patcher.find_all(source, "Enum.take(_, -_)")
 ExAST.Patcher.find_all(source, "{a, a}")
 
 # Compile-time config reads
-ExAST.Patcher.find_all(source, "@name Application.get_env(_, _)")
+ExAST.Patcher.find_all(source, "@name Application.compile_env(_, _)")
 
 # Batch analyzer checks in one scan
 ExAST.Patcher.find_many(source,
-  get_env: "@_ Application.get_env(_, _)",
+  compile_env: "@_ Application.compile_env(_, _)",
   dbg_call: "dbg(expr)"
 )
 # same batch from the CLI — one boot, one parse per file:
-#   mix ex_ast.search -e "@_ Application.get_env(_, _)" -e "dbg(_)" lib/
+#   mix ex_ast.search -e "@_ Application.compile_env(_, _)" -e "dbg(_)" lib/
 
 # Preview rewrites before applying patches
 ExAST.rewrite_plan(source, "dbg(expr)", "expr")
@@ -124,7 +124,7 @@ a = Repo.get!(_, _); Repo.delete(a)
 
 # Directives and attributes
 use GenServer
-@env Application.get_env(_, _)
+@env Application.compile_env(_, _)
 
 # Control flow and standalone clauses
 case _ do _ -> _ end

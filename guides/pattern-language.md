@@ -190,16 +190,20 @@ ExAST.Patcher.find_all(source, "Ecto.Query.from(_, _)")
 
 ## Module attributes
 
-Attribute names are captureable — the `@name` inside `@name(expr)` matches like a variable, not a literal:
+Attribute names are captureable — the `@name` inside `@name(expr)` matches like a variable,
+not a literal.
+
+Module attributes are evaluated at compile time, so config reads use
+`Application.compile_env/2`; `Application.get_env/2` is the runtime API.
 
 ```elixir
 source = """
-@env Application.get_env(:app, :key)
+@env Application.compile_env(:app, :key)
 @port 4000
-@db_url Application.get_env(:app, :db_url)
+@db_url Application.compile_env(:app, :db_url)
 """
 
-ExAST.Patcher.find_all(source, "@name Application.get_env(_, _)")
+ExAST.Patcher.find_all(source, "@name Application.compile_env(_, _)")
 #=> [%{captures: %{name: :env}}, %{captures: %{name: :db_url}}]
 ```
 
@@ -227,7 +231,7 @@ Common patterns that solve real problems without needing queries or guards:
 ~S|IO.puts("done\n")|
 
 # Any module attribute read at compile time
-"@_ Application.get_env(_, _)"
+"@_ Application.compile_env(_, _)"
 
 # Pipe chain (matches both pipe and direct form)
 "Enum.filter(_, _) |> Enum.map(_)"

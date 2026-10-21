@@ -983,37 +983,49 @@ defmodule ExAST.PatternTest do
 
     test "captures attribute name" do
       assert {:ok, caps} =
-               match!("@env Application.get_env(:app, :key)", "@name Application.get_env(_, _)")
+               match!(
+                 "@env Application.compile_env(:app, :key)",
+                 "@name Application.compile_env(_, _)"
+               )
 
       assert caps[:name] == :env
     end
 
     test "wildcards in attribute name" do
       assert {:ok, %{}} =
-               match!("@env Application.get_env(:app, :key)", "@_ Application.get_env(_, _)")
+               match!(
+                 "@env Application.compile_env(:app, :key)",
+                 "@_ Application.compile_env(_, _)"
+               )
     end
 
     test "wildcard-prefixed attribute name" do
       assert {:ok, %{}} =
-               match!("@env Application.get_env(:app, :key)", "@_name Application.get_env(_, _)")
+               match!(
+                 "@env Application.compile_env(:app, :key)",
+                 "@_name Application.compile_env(_, _)"
+               )
     end
 
     test "literal attribute name match" do
       assert {:ok, caps} =
-               match!("@env Application.get_env(:app, :key)", "@env Application.get_env(_, _)")
+               match!(
+                 "@env Application.compile_env(:app, :key)",
+                 "@env Application.compile_env(_, _)"
+               )
 
       assert caps[:env] == :env
     end
 
     test "captures attribute name with Patcher.find_all" do
       source = """
-      @env Application.get_env(:my_app, :key)
+      @env Application.compile_env(:my_app, :key)
       @timeout 5000
-      @db_url Application.get_env(:my_app, :db_url)
+      @db_url Application.compile_env(:my_app, :db_url)
       """
 
       alias ExAST.Patcher
-      matches = Patcher.find_all(source, "@name Application.get_env(_, _)")
+      matches = Patcher.find_all(source, "@name Application.compile_env(_, _)")
       assert length(matches) == 2
       assert Enum.map(matches, & &1.captures[:name]) == [:env, :db_url]
     end

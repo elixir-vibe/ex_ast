@@ -662,22 +662,22 @@ defmodule ExAST.PatcherTest do
   describe "candidate prefiltering" do
     test "keeps module attribute patterns with nested remote calls" do
       source = """
-      @name Application.get_env(:app, :name)
+      @name Application.compile_env(:app, :name)
       @other :literal
       """
 
-      assert [%{source: "@name Application.get_env(:app, :name)"}] =
-               Patcher.find_all(source, "@_ Application.get_env(_, _)")
+      assert [%{source: "@name Application.compile_env(:app, :name)"}] =
+               Patcher.find_all(source, "@_ Application.compile_env(_, _)")
     end
 
     test "keeps nested remote calls under aliases" do
       source = """
       alias Application, as: App
-      @name App.get_env(:app, :name)
+      @name App.compile_env(:app, :name)
       """
 
-      assert [%{source: "@name App.get_env(:app, :name)"}] =
-               Patcher.find_all(source, "@_ Application.get_env(_, _)")
+      assert [%{source: "@name App.compile_env(:app, :name)"}] =
+               Patcher.find_all(source, "@_ Application.compile_env(_, _)")
     end
 
     test "keeps patterns with nested calls inside arguments" do
@@ -722,13 +722,13 @@ defmodule ExAST.PatcherTest do
 
     test "keeps nested calls in batched scans" do
       source = """
-      @name Application.get_env(:app, :name)
+      @name Application.compile_env(:app, :name)
       dbg(value)
       """
 
       assert [%{pattern: :env}, %{pattern: :debug}] =
                Patcher.find_many(source,
-                 env: "@_ Application.get_env(_, _)",
+                 env: "@_ Application.compile_env(_, _)",
                  debug: "dbg(_)"
                )
     end
