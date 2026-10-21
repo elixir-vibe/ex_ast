@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- `Pattern.attribute_names/1` returns the attribute names a pattern captures,
+  and `Pattern.substitute/3` accepts them as `:attribute_names`.
+
+### Fixed
+
+- A captured attribute name replaces the name in `@name args`. A literal `@doc`,
+  `@spec` or `@impl` in a replacement template survives a pattern that binds a
+  variable of the same name.
+
 ## 0.16.0 - 2026-10-06
 
 ### Added

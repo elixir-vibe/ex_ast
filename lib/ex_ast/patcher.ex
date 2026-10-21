@@ -74,7 +74,7 @@ defmodule ExAST.Patcher do
   end
 
   # Like `find_all/3`, but captures keep what each `...` matched under `:...`,
-  # which `Pattern.substitute/2` needs.
+  # which `Pattern.substitute/3` needs.
   @doc false
   def find_all_with_rests(input, pattern, opts) do
     input |> do_find_all_input(pattern, opts) |> take_limit(opts)
@@ -183,7 +183,10 @@ defmodule ExAST.Patcher do
   Sourceror AST that renders with `Sourceror.to_string/1`.
 
   Pattern and replacement can be strings or quoted expressions.
-  Captures from the pattern are substituted into the replacement template.
+  Captures from the pattern are substituted into the replacement template. An
+  attribute name is substituted when the pattern captured it from an attribute
+  slot, so a literal `@doc` in the replacement survives a pattern that binds a
+  variable named `doc`.
   Accepts the same options as `find_all/3`; `limit: 1` replaces only the first
   match.
   """
@@ -200,11 +203,14 @@ defmodule ExAST.Patcher do
 
   def replace_all(source, pattern, replacement, opts) when is_binary(source) do
     replacement_ast = to_quoted(replacement)
+    attribute_names = attribute_names(pattern)
     matches = find_all_with_rests(source, pattern, opts)
 
     patches =
       Enum.map(matches, fn %{range: range, captures: captures} ->
-        substituted = Pattern.substitute(replacement_ast, captures)
+        substituted =
+          Pattern.substitute(replacement_ast, captures, attribute_names: attribute_names)
+
         %{range: range, change: ExAST.AST.to_string(substituted)}
       end)
 
@@ -288,8 +294,33 @@ defmodule ExAST.Patcher do
 
   # --- Core replace logic (AST → AST) ---
 
+  @doc false
+  @spec attribute_names(Pattern.pattern() | Selector.t() | ExAST.CompiledPattern.t()) ::
+          MapSet.t(atom())
+  def attribute_names(%Selector{} = selector) do
+    selector
+    |> selector_patterns()
+    |> Enum.reduce(MapSet.new(), &MapSet.union(&2, Pattern.attribute_names(&1)))
+  end
+
+  def attribute_names(pattern), do: Pattern.attribute_names(pattern)
+
+  # Captures come from the steps. Predicates match with their own captures and discard them, so
+  # their patterns never name a captured attribute.
+  defp selector_patterns(%Selector{steps: steps}) do
+    Enum.flat_map(steps, fn {_relation, pattern} -> selector_patterns(pattern) end)
+  end
+
+  defp selector_patterns(patterns) when is_list(patterns),
+    do: Enum.flat_map(patterns, &selector_patterns/1)
+
+  defp selector_patterns(pattern) when is_binary(pattern) or is_tuple(pattern), do: [pattern]
+
+  defp selector_patterns(_other), do: []
+
   defp do_replace_all_ast(ast, pattern, replacement, opts) do
     replacement_ast = to_quoted(replacement)
+    attribute_names = attribute_names(pattern)
 
     matched_captures =
       ast
@@ -298,18 +329,18 @@ defmodule ExAST.Patcher do
       |> Map.new(&{&1.node, &1.captures})
 
     Macro.prewalk(ast, fn node ->
-      maybe_replace_node(node, matched_captures, replacement_ast)
+      maybe_replace_node(node, matched_captures, replacement_ast, attribute_names)
     end)
   end
 
-  defp maybe_replace_node(node, matched_captures, replacement_ast) do
+  defp maybe_replace_node(node, matched_captures, replacement_ast, attribute_names) do
     case Map.fetch(matched_captures, node) do
       # Captures hold normalized values (bare literals, resolved escapes), so render
       # the replacement and parse it back into Sourceror AST.
       {:ok, captures} ->
         captures
         |> ExAST.AST.strip_sourceror_meta()
-        |> then(&Pattern.substitute(replacement_ast, &1))
+        |> then(&Pattern.substitute(replacement_ast, &1, attribute_names: attribute_names))
         |> ExAST.AST.to_string()
         |> Sourceror.parse_string!()
 

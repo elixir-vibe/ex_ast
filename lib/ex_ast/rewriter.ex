@@ -43,6 +43,7 @@ defmodule ExAST.Rewriter do
           Plan.t()
   def plan(source, pattern, replacement, opts \\ []) when is_binary(source) do
     replacement_ast = to_quoted(replacement)
+    attribute_names = ExAST.Patcher.attribute_names(pattern)
 
     replacements =
       source
@@ -50,7 +51,9 @@ defmodule ExAST.Rewriter do
       |> Enum.map(fn %{range: range, source: original, captures: captures} ->
         replacement_source =
           replacement_ast
-          |> Pattern.substitute(ExAST.AST.strip_sourceror_meta(captures))
+          |> Pattern.substitute(ExAST.AST.strip_sourceror_meta(captures),
+            attribute_names: attribute_names
+          )
           |> ExAST.AST.to_string()
 
         %Replacement{

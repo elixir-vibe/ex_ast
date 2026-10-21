@@ -66,7 +66,7 @@ defmodule ExAST.Pattern do
   The pattern can be a string or a quoted expression.
   Returns `{:ok, captures}` on match, `:error` otherwise. When the pattern has
   `...`, captures also hold what it matched under the `:...` key, which
-  `substitute/2` uses.
+  `substitute/3` uses.
 
   Alias directives found in the surrounding AST can be expanded before matching,
   so `alias AshPhoenix.Form` followed by `Form.for_update(...)` matches
@@ -231,6 +231,35 @@ defmodule ExAST.Pattern do
   end
 
   @doc """
+  Returns the attribute names a pattern captures from attribute slots.
+
+  An attribute slot holds a name, so `@fragment_epoch` in a pattern captures
+  `fragment_epoch: :fragment_epoch`, and `@name args` captures `name: :name`.
+  Names the pattern cannot capture, such as `@_name`, are left out.
+
+  See `substitute/3`.
+  """
+  @spec attribute_names(pattern() | CompiledPattern.t()) :: MapSet.t(atom())
+  def attribute_names(pattern) do
+    pattern |> compile_ast() |> attribute_names_in() |> MapSet.new()
+  end
+
+  defp attribute_names_in({:@, _meta, [{name, _name_meta, args}]}) when is_atom(name) do
+    nested = attribute_names_in(args)
+
+    if capturable_name?(name), do: [name | nested], else: nested
+  end
+
+  defp attribute_names_in({form, _meta, args}),
+    do: attribute_names_in(form) ++ attribute_names_in(args)
+
+  defp attribute_names_in({left, right}), do: attribute_names_in([left, right])
+
+  defp attribute_names_in(list) when is_list(list), do: Enum.flat_map(list, &attribute_names_in/1)
+
+  defp attribute_names_in(_other), do: []
+
+  @doc """
   Substitutes captured values into a replacement template AST.
 
   Variables in the template that match capture names are replaced
@@ -241,14 +270,25 @@ defmodule ExAST.Pattern do
   map pairs are spliced in. When the pattern has one `...`, every `...` in the
   template refers to it; with several, the template must use the same number,
   in the same order. A `...` is kept as written when the pattern had none.
+
+  An attribute slot holds a name, so a captured name replaces the name in
+  `@name args`. Options:
+
+    * `:attribute_names` — the names the pattern captured from an attribute slot,
+      as returned by `attribute_names/1`. Without it an attribute that has
+      arguments keeps its own name, so a capture the pattern bound anywhere else
+      cannot overwrite a literal `@doc` or `@spec`. A captured value that cannot
+      name an attribute, such as an alias or an operator, keeps the template's
+      name too.
   """
-  @spec substitute(Macro.t(), captures()) :: Macro.t()
-  def substitute(template_ast, captures) do
+  @spec substitute(Macro.t(), captures(), keyword()) :: Macro.t()
+  def substitute(template_ast, captures, opts \\ []) do
     {rests, captures} = Map.pop(captures, :..., [])
     {template_ast, count} = number_ellipses(template_ast, rests)
     rests = rests |> rests_for(count) |> List.to_tuple()
+    attribute_names = opts |> Keyword.get(:attribute_names, []) |> MapSet.new()
 
-    do_substitute(template_ast, Map.put(captures, :..., rests))
+    do_substitute(template_ast, Map.put(captures, :..., rests), attribute_names)
   end
 
   defp rests_for(_rests, 0), do: []
@@ -1230,13 +1270,14 @@ defmodule ExAST.Pattern do
 
   # --- Substitution ---
 
-  defp do_substitute({:__ex_ast_ellipsis__, _meta, [index]}, captures),
+  defp do_substitute({:__ex_ast_ellipsis__, _meta, [index]}, captures, _attribute_names),
     do: captures |> rest_at(index) |> single_rest(false)
 
-  defp do_substitute({:__block__, meta, statements}, captures) when is_list(statements) do
+  defp do_substitute({:__block__, meta, statements}, captures, attribute_names)
+       when is_list(statements) do
     statements =
       statements
-      |> substitute_list(captures)
+      |> substitute_list(captures, attribute_names)
       |> Enum.flat_map(fn
         {:__block__, _, inner} when is_list(inner) -> inner
         statement -> [statement]
@@ -1245,55 +1286,98 @@ defmodule ExAST.Pattern do
     {:__block__, meta, statements}
   end
 
-  defp do_substitute({:%{}, meta, pairs}, captures) when is_list(pairs),
-    do: {:%{}, meta, substitute_pairs(pairs, captures)}
+  defp do_substitute({:%{}, meta, pairs}, captures, attribute_names) when is_list(pairs),
+    do: {:%{}, meta, substitute_pairs(pairs, captures, attribute_names)}
 
-  defp do_substitute({name, meta, context}, captures) when is_atom(name) and is_atom(context) do
-    s = Atom.to_string(name)
-
-    if not String.starts_with?(s, "_") and Map.has_key?(captures, name) do
+  defp do_substitute({name, meta, context}, captures, _attribute_names)
+       when is_atom(name) and is_atom(context) do
+    if capture_name?(name, captures) do
       Map.fetch!(captures, name)
     else
       {name, meta, context}
     end
   end
 
-  defp do_substitute({form, meta, args}, captures) when is_atom(form) do
-    {form, meta, substitute_args(args, captures)}
+  # An attribute slot holds a name. Without arguments the capture replaces the node, as before;
+  # an atom capture keeps the attribute's shape, which renders as `@env` instead of `@:env`.
+  defp do_substitute({:@, meta, [{name, name_meta, nil}]}, captures, _attribute_names) do
+    if capture_name?(name, captures) do
+      case Map.fetch!(captures, name) do
+        value when is_atom(value) -> {:@, meta, [{value, name_meta, nil}]}
+        value -> {:@, meta, [value]}
+      end
+    else
+      {:@, meta, [{name, name_meta, nil}]}
+    end
   end
 
-  defp do_substitute({form, meta, args}, captures) do
-    {do_substitute(form, captures), meta, substitute_args(args, captures)}
+  # An attribute with arguments keeps its own name unless the pattern captured that name from an
+  # attribute slot: a literal `@doc` must survive a pattern that happens to bind `doc` as a
+  # variable. A capture that cannot name an attribute keeps the template's name as well.
+  defp do_substitute({:@, meta, [{name, name_meta, args}]}, captures, attribute_names)
+       when is_atom(name) do
+    args = substitute_args(args, captures, attribute_names)
+    value = Map.get(captures, name)
+
+    if capture_name?(name, captures) and name in attribute_names and attribute_name?(value) do
+      {:@, meta, [{value, name_meta, args}]}
+    else
+      {:@, meta, [{name, name_meta, args}]}
+    end
+  end
+
+  defp do_substitute({form, meta, args}, captures, attribute_names) when is_atom(form) do
+    {form, meta, substitute_args(args, captures, attribute_names)}
+  end
+
+  defp do_substitute({form, meta, args}, captures, attribute_names) do
+    {do_substitute(form, captures, attribute_names), meta,
+     substitute_args(args, captures, attribute_names)}
   end
 
   # A 2-tuple outside a list is a tuple: `{:error, ...}` splices into `{:error, a, b}`.
-  defp do_substitute({left, right}, captures) do
+  defp do_substitute({left, right}, captures, attribute_names) do
     if ellipsis_placeholder?(left) or ellipsis_placeholder?(right),
-      do: {:{}, [], substitute_list([left, right], captures)},
-      else: {do_substitute(left, captures), do_substitute(right, captures)}
+      do: {:{}, [], substitute_list([left, right], captures, attribute_names)},
+      else:
+        {do_substitute(left, captures, attribute_names),
+         do_substitute(right, captures, attribute_names)}
   end
 
-  defp do_substitute(list, captures) when is_list(list), do: substitute_pairs(list, captures)
+  defp do_substitute(list, captures, attribute_names) when is_list(list),
+    do: substitute_pairs(list, captures, attribute_names)
 
-  defp do_substitute(other, _captures), do: other
+  defp do_substitute(other, _captures, _attribute_names), do: other
 
-  defp substitute_list(list, captures) do
+  defp capture_name?(name, captures),
+    do: capturable_name?(name) and Map.has_key?(captures, name)
+
+  defp capturable_name?(name), do: not String.starts_with?(Atom.to_string(name), "_")
+
+  defp attribute_name?(value) when is_atom(value), do: Macro.classify_atom(value) == :identifier
+  defp attribute_name?(_value), do: false
+
+  defp substitute_list(list, captures, attribute_names) do
     Enum.flat_map(list, fn
       {:__ex_ast_ellipsis__, _meta, [index]} -> captures |> rest_at(index) |> spliced_rest()
-      element -> [do_substitute(element, captures)]
+      element -> [do_substitute(element, captures, attribute_names)]
     end)
   end
 
   # In a list literal or map, a 2-tuple is a key-value pair, so in `key: ...` the
   # `...` is a single value.
-  defp substitute_pairs(list, captures) do
+  defp substitute_pairs(list, captures, attribute_names) do
     Enum.flat_map(list, fn
       {key, {:__ex_ast_ellipsis__, _meta, [index]}} ->
         body? = key in [:do, :else, :after, :rescue, :catch]
-        [{do_substitute(key, captures), captures |> rest_at(index) |> single_rest(body?)}]
+
+        [
+          {do_substitute(key, captures, attribute_names),
+           captures |> rest_at(index) |> single_rest(body?)}
+        ]
 
       element ->
-        substitute_list([element], captures)
+        substitute_list([element], captures, attribute_names)
     end)
   end
 
@@ -1302,8 +1386,8 @@ defmodule ExAST.Pattern do
 
   # `Logger.info(x, ..., limit: 5)` with `...` ending in `label: "a"` gives
   # `Logger.info(x, label: "a", limit: 5)`, not two keyword-list arguments.
-  defp substitute_args(args, captures) when is_list(args) do
-    substituted = substitute_list(args, captures)
+  defp substitute_args(args, captures, attribute_names) when is_list(args) do
+    substituted = substitute_list(args, captures, attribute_names)
 
     with [{:__ex_ast_ellipsis__, _, _}, last] <- Enum.take(args, -2),
          true <- keyword?(last),
@@ -1315,7 +1399,8 @@ defmodule ExAST.Pattern do
     end
   end
 
-  defp substitute_args(args, captures), do: do_substitute(args, captures)
+  defp substitute_args(args, captures, attribute_names),
+    do: do_substitute(args, captures, attribute_names)
 
   defp rest_at(captures, index), do: captures |> Map.fetch!(:...) |> elem(index)
 

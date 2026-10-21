@@ -297,6 +297,93 @@ defmodule ExAST.PatcherTest do
 
       assert result =~ "build_step(@my_fields)"
     end
+
+    test "keeps an attribute that appears in the pattern and the replacement" do
+      source = """
+      defmodule Example do
+        def cleanup do
+          Process.delete(@fragment_epoch)
+        end
+      end
+      """
+
+      result =
+        Patcher.replace_all(
+          source,
+          "Process.delete(@fragment_epoch)",
+          "Process.delete(@fragment_epoch)"
+        )
+
+      assert result =~ "Process.delete(@fragment_epoch)"
+      refute result =~ "@:"
+    end
+
+    test "substitutes a captured attribute name" do
+      source = """
+      @env Application.compile_env(:app, :key)
+      """
+
+      assert Patcher.replace_all(
+               source,
+               "@name Application.compile_env(:app, :key)",
+               "@name Application.compile_env(:app, :other_key)"
+             ) =~ "@env Application.compile_env(:app, :other_key)"
+    end
+
+    test "keeps a literal @doc when the pattern captures a variable named doc" do
+      source = """
+      def run(doc), do: doc
+      """
+
+      result =
+        Patcher.replace_all(
+          source,
+          "def run(doc), do: doc",
+          """
+          @doc \"Runs.\"
+          def run(doc), do: doc
+          """
+        )
+
+      assert result =~ ~s|@doc "Runs."|
+    end
+
+    test "keeps a literal @spec when the pattern captures a variable named spec" do
+      source = "defschema(spec)\n"
+
+      result =
+        Patcher.replace_all(
+          source,
+          "defschema(spec)",
+          """
+          @spec run() :: :ok
+          defschema(spec)
+          """
+        )
+
+      assert result =~ "@spec run() :: :ok"
+    end
+
+    test "keeps a literal @impl when the pattern captures a variable named impl" do
+      source = "use_impl(:custom)\n"
+
+      result =
+        Patcher.replace_all(
+          source,
+          "use_impl(impl)",
+          """
+          @impl true
+          use_impl(impl)
+          """
+        )
+
+      assert result =~ "@impl true"
+      refute result =~ "@custom"
+    end
+
+    test "keeps an attribute with arguments when the captured value is not a name" do
+      assert Patcher.replace_all("foo(x + 1)\n", "foo(name)", "@name 42") == "@name 42\n"
+    end
   end
 
   describe "where conditions" do
@@ -1111,9 +1198,47 @@ defmodule ExAST.PatcherTest do
       assert replace(source, filtered, "wrapped(...)") == "wrapped(1, 2, inner(3, 4))"
     end
 
+    test "substitutes attribute names captured by a selector step" do
+      import ExAST.Selector
+
+      source = """
+      defmodule Example do
+        @env Application.compile_env(:app, :key)
+      end
+      """
+
+      selector =
+        pattern("defmodule _ do ... end")
+        |> descendant("@name Application.compile_env(_, _)")
+
+      assert replace(source, selector, "@name Application.fetch_env!(_, _)") =~
+               "@env Application.fetch_env!(_, _)"
+    end
+
+    test "ignores attribute names that only appear in selector predicates" do
+      import ExAST.Selector
+
+      source = """
+      def f(:custom) do
+        @name value
+      end
+      """
+
+      selector = pattern("def f(name) do ... end") |> where(has_child("@name value"))
+
+      assert replace(source, selector, "@name 42") == "@name 42"
+    end
+
     test "works for multi-node patterns" do
       assert replace("a = f(1, 2)\nb = g(a)\n", "a = f(...)\nb = g(a)", "b = g(f(...))") ==
                "b = g(f(1, 2))"
+    end
+
+    test "keeps a template attribute when replacing AST" do
+      ast = Sourceror.parse_string!("foo(x + 1)")
+
+      assert ast |> Patcher.replace_all("foo(name)", "@name 42") |> Sourceror.to_string() ==
+               "@name 42"
     end
 
     test "returns Sourceror AST for zipper input" do

@@ -160,6 +160,32 @@ defmodule ExASTTest do
       assert plan.conflicts == []
       assert ExAST.Rewriter.apply(source, plan) == "def run do\n  user\nend\n"
     end
+
+    test "keep a template attribute the pattern did not capture from an attribute slot" do
+      source = "def run(doc), do: doc\n"
+
+      plan =
+        ExAST.rewrite_plan(
+          source,
+          "def run(doc), do: doc",
+          ~s|@doc "Runs."\ndef run(doc), do: doc|
+        )
+
+      assert [%ExAST.Rewriter.Replacement{replacement: replacement}] = plan.replacements
+      assert replacement =~ ~s|@doc "Runs."|
+    end
+
+    test "substitute an attribute name captured from an attribute slot" do
+      plan =
+        ExAST.rewrite_plan(
+          "@env Application.compile_env(:a, :b)",
+          "@name Application.compile_env(_, _)",
+          "@name Application.fetch_env!(_, _)"
+        )
+
+      assert [%ExAST.Rewriter.Replacement{replacement: "@env Application.fetch_env!(_, _)"}] =
+               plan.replacements
+    end
   end
 
   describe "compiled patterns" do

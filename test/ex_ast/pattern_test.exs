@@ -1017,6 +1017,90 @@ defmodule ExAST.PatternTest do
       assert length(matches) == 2
       assert Enum.map(matches, & &1.captures[:name]) == [:env, :db_url]
     end
+
+    test "substitutes a captured attribute name" do
+      template = Code.string_to_quoted!("Process.delete(@name)")
+
+      assert template |> Pattern.substitute(%{name: :fragment_epoch}) |> Macro.to_string() ==
+               "Process.delete(@fragment_epoch)"
+    end
+
+    test "substitutes a captured attribute name with arguments" do
+      template = Code.string_to_quoted!("@name Application.compile_env(:app, :key)")
+
+      assert template
+             |> Pattern.substitute(%{name: :env}, attribute_names: [:name])
+             |> Macro.to_string() == "@env Application.compile_env(:app, :key)"
+    end
+
+    test "keeps an attribute with arguments when its name came from outside an attribute slot" do
+      template = Code.string_to_quoted!(~s|@doc "Runs."|)
+
+      assert template |> Pattern.substitute(%{doc: "value"}) |> Macro.to_string() ==
+               ~s|@doc "Runs."|
+
+      assert template
+             |> Pattern.substitute(%{doc: :custom}, attribute_names: [:other])
+             |> Macro.to_string() == ~s|@doc "Runs."|
+    end
+
+    test "keeps an attribute with arguments when the captured value is not a name" do
+      template = Code.string_to_quoted!("@name 42")
+
+      assert template
+             |> Pattern.substitute(%{name: quote(do: x + 1)}, attribute_names: [:name])
+             |> Macro.to_string() == "@name 42"
+    end
+
+    test "keeps an attribute with arguments when the captured value cannot name an attribute" do
+      template = Code.string_to_quoted!("@name 1")
+
+      for value <- [:"Elixir.Foo.Bar", :+] do
+        assert template
+               |> Pattern.substitute(%{name: value}, attribute_names: [:name])
+               |> Macro.to_string() == "@name 1"
+      end
+    end
+
+    test "substitutes an attribute name without arguments for any capture" do
+      template = Code.string_to_quoted!("@name")
+
+      assert template |> Pattern.substitute(%{name: quote(do: x + 1)}) |> Macro.to_string() ==
+               "@(x + 1)"
+    end
+
+    test "collects the attribute names a pattern captures" do
+      assert Pattern.attribute_names("Process.delete(@fragment_epoch)") ==
+               MapSet.new([:fragment_epoch])
+
+      assert Pattern.attribute_names("@name Application.compile_env(_, _)") ==
+               MapSet.new([:name])
+
+      assert Pattern.attribute_names("@doc \"Runs.\"") == MapSet.new([:doc])
+      assert Pattern.attribute_names("foo(name)") == MapSet.new()
+      assert Pattern.attribute_names("Process.delete(@_name)") == MapSet.new()
+
+      assert "@name Application.compile_env(_, _)"
+             |> Pattern.compile()
+             |> Pattern.attribute_names() == MapSet.new([:name])
+    end
+
+    test "keeps an attribute name that was not captured" do
+      template = Code.string_to_quoted!("Process.delete(@fragment_epoch)")
+
+      assert template |> Pattern.substitute(%{expr: :value}) |> Macro.to_string() ==
+               "Process.delete(@fragment_epoch)"
+
+      assert template |> Pattern.substitute(%{_name: :value}) |> Macro.to_string() ==
+               "Process.delete(@fragment_epoch)"
+    end
+
+    test "keeps a wildcard-prefixed attribute name" do
+      template = Code.string_to_quoted!("Process.delete(@_name)")
+
+      assert template |> Pattern.substitute(%{_name: :other}) |> Macro.to_string() ==
+               "Process.delete(@_name)"
+    end
   end
 
   describe "control flow" do
