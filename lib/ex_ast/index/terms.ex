@@ -129,11 +129,21 @@ defmodule ExAST.Index.Terms do
     {node, terms}
   end
 
-  defp visit({:@, _meta, [{name, _, args}]} = node, terms, _mode) do
+  defp visit({:@, meta, [{name, name_meta, args}]} = node, terms, mode) do
     if identifier?(name) do
-      name = identifier_name(name)
       arity = if is_list(args), do: length(args), else: 0
-      {node, ["node:attribute", "attribute:#{name}", "attribute.arity:#{arity}" | terms]}
+      terms = ["node:attribute", "attribute.arity:#{arity}" | terms]
+
+      case mode do
+        :source ->
+          {node, ["attribute:#{identifier_name(name)}" | terms]}
+
+        :pattern ->
+          # A pattern captures the attribute's name, so the name constrains nothing about the
+          # source. Replace it before descending, or it would be indexed as a call; the
+          # arguments still produce their own terms.
+          {{:@, meta, [{:__ex_ast_attribute_name__, name_meta, args}]}, terms}
+      end
     else
       {node, terms}
     end
@@ -448,6 +458,8 @@ defmodule ExAST.Index.Terms do
 
   defp function_head(_head, _mode), do: :unknown
 
+  defp pattern_capture_call?({:__ex_ast_attribute_name__, _meta, _args}, :pattern), do: true
+
   defp pattern_capture_call?({name, _meta, nil}, :pattern),
     do: capture_identifier?(name)
 
@@ -477,6 +489,7 @@ defmodule ExAST.Index.Terms do
   defp literal_integer(_other), do: nil
 
   defp synthetic_call?(name) when is_atom(name), do: name in [:__aliases__, :__block__, :..., :_]
+
   defp synthetic_call?(_name), do: false
 
   defp capture_identifier?(name) when is_atom(name), do: capture_name?(name)

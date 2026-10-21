@@ -10,6 +10,16 @@ defmodule ExASTTest do
     end
 
     @tag :tmp_dir
+    test "finds an attribute pattern whose name differs from the source", %{tmp_dir: dir} do
+      File.write!(Path.join(dir, "a.ex"), "@timeout Application.compile_env(:app, :key)\n")
+      File.write!(Path.join(dir, "b.ex"), "@env Application.compile_env(:app, :key)\n")
+
+      results = ExAST.search(dir, "@name Application.compile_env(_, _)")
+
+      assert results |> Enum.map(&Path.basename(&1.file)) |> Enum.sort() == ["a.ex", "b.ex"]
+    end
+
+    @tag :tmp_dir
     test "finds matches across files", %{tmp_dir: dir} do
       File.write!(Path.join(dir, "a.ex"), """
       IO.inspect(x)
@@ -113,6 +123,21 @@ defmodule ExASTTest do
       assert content =~ "dbg(data)"
       assert content =~ "dbg(other)"
       assert content =~ "IO.puts"
+    end
+
+    @tag :tmp_dir
+    test "replaces an attribute pattern whose name differs from the file", %{tmp_dir: dir} do
+      path = Path.join(dir, "a.ex")
+      File.write!(path, "@timeout Application.compile_env(:app, :key)\n")
+
+      assert [{^path, 1}] =
+               ExAST.replace(
+                 dir,
+                 "@name Application.compile_env(app, key)",
+                 "Application.fetch_env!(app, key)"
+               )
+
+      assert File.read!(path) == "Application.fetch_env!(:app, :key)\n"
     end
 
     @tag :tmp_dir

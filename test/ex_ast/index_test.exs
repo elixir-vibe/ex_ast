@@ -18,6 +18,41 @@ defmodule ExAST.IndexTest do
     assert MapSet.member?(Terms.from_pattern("def run(arg) do ... end"), "def:run/1")
   end
 
+  test "does not index the name a pattern captures from an attribute slot" do
+    terms = Terms.from_pattern("@name Application.compile_env(_, _)")
+
+    refute MapSet.member?(terms, "attribute:name")
+    refute MapSet.member?(terms, "call.local:name/1")
+    refute MapSet.member?(terms, "call.function:name")
+    assert MapSet.member?(terms, "attribute.arity:1")
+    assert MapSet.member?(terms, "call.remote:Application.compile_env/2")
+  end
+
+  test "keeps indexing an attribute name in source" do
+    assert MapSet.member?(
+             Terms.from_source("@env Application.compile_env(:app, :key)"),
+             "attribute:env"
+           )
+  end
+
+  test "requires only the terms an attribute pattern constrains" do
+    plan = Index.plan("@name Application.compile_env(_, _)")
+
+    assert MapSet.member?(plan.required_terms, "call.remote:Application.compile_env/2")
+    refute MapSet.member?(plan.required_terms, "attribute:name")
+    refute MapSet.member?(plan.required_terms, "call.local:name/1")
+  end
+
+  test "does not require an attribute name a selector predicate captures" do
+    plan =
+      from("def _ do ... end")
+      |> where(has_child("@name Application.compile_env(_, _)"))
+      |> Index.plan()
+
+    refute MapSet.member?(plan.required_terms, "attribute:name")
+    refute MapSet.member?(plan.required_terms, "call.local:name/1")
+  end
+
   test "plans selector terms without low-signal generic call terms as required terms" do
     plan =
       from("def _ do ... end")

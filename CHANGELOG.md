@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Search, replace and `mix ex_ast.replace` no longer require the source to contain
+  a pattern's attribute name. Attribute names are captures, so
+  `@name Application.compile_env(_, _)` also matches `@timeout ...`.
+
 ## 0.16.0 - 2026-10-06
 
 ### Added
