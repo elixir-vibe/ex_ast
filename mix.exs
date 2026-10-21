@@ -44,6 +44,7 @@ defmodule ExAST.MixProject do
     [
       main: "readme",
       source_ref: "v#{@version}",
+      filter_modules: fn mod, _ -> mod != ExAST.Source end,
       extras: [
         "README.md",
         "CHANGELOG.md",

@@ -134,7 +134,9 @@ defmodule ExAST do
   - `:not_inside` — skip replacements inside ancestors matching this pattern
   - `:format` — format modified files with `Code.format_string!/1`
 
-  Returns a list of `{file, count}` tuples for modified files.
+  Returns a list of `{file, count}` tuples for modified files. Raises
+  `ExAST.Source.ConcurrentUpdateError` when a file keeps changing while it is updated; files
+  replaced before the error stay replaced.
   """
   @spec replace(String.t() | [String.t()], String.t() | ExAST.Selector.t(), String.t(), keyword()) ::
           [
@@ -300,27 +302,30 @@ defmodule ExAST do
     source = File.read!(file)
 
     if ExAST.Prefilter.may_match?(source, pattern) do
-      source
-      |> Rewriter.plan(pattern, replacement, where_opts)
-      |> apply_rewrite_plan(file, source, dry_run, format?)
+      file
+      |> ExAST.Source.update(
+        &rewrite_source(&1, pattern, replacement, dry_run, format?, where_opts)
+      )
+      |> case do
+        0 -> []
+        count -> [{file, count}]
+      end
     else
       []
     end
   end
 
-  defp apply_rewrite_plan(%Rewriter.Plan{replacements: []}, _file, _source, _dry_run, _format?),
-    do: []
+  defp rewrite_source(source, pattern, replacement, dry_run, format?, where_opts) do
+    plan = Rewriter.plan(source, pattern, replacement, where_opts)
+    count = length(plan.replacements)
 
-  defp apply_rewrite_plan(
-         %Rewriter.Plan{replacements: replacements} = plan,
-         file,
-         source,
-         dry_run,
-         format?
-       ) do
-    result = source |> Rewriter.apply(plan, on_conflict: :raise) |> maybe_format(format?)
-    unless dry_run, do: File.write!(file, result)
-    [{file, length(replacements)}]
+    if count == 0 do
+      {source, 0}
+    else
+      # apply/3 rejects overlapping replacements, so a dry run fails where a real run would.
+      rewritten = Rewriter.apply(source, plan, on_conflict: :raise)
+      {if(dry_run, do: source, else: maybe_format(rewritten, format?)), count}
+    end
   end
 
   defp maybe_format(source, false), do: source
